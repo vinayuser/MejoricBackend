@@ -51,7 +51,7 @@ const userSchema = new mongoose.Schema(
     fcmToken: { type: String, select: false },
     image: { type: String },
     otp: {
-      type: { code: String, expiresAt: Date },
+      type: { code: String, sessionId: String, expiresAt: Date },
       select: false,
     },
     resetPasswordTokenHash: { type: String, select: false },

@@ -7,7 +7,8 @@ const {
   throwError,
   generateOTP,
 } = require("../../utils");
-const { sendLoginOtpMail } = require("../../helpers/nodeMailer");
+// const { sendLoginOtpMail } = require("../../helpers/nodeMailer");
+const { sendOtpToMobile } = require("../../services/otp");
 
 exports.loginOrSignInWithEmail = asyncWrapper(async (req, res) => {
   let { email, role, loginType } = req.body;
@@ -21,11 +22,11 @@ exports.loginOrSignInWithEmail = asyncWrapper(async (req, res) => {
   };
   let isFirst = false;
   let user = await User.findOne({ email, role, isDeleted: false }).select(
-    "+password"
+    "+password +otp",
   );
   if (!user) {
     isFirst = true;
-    user = User.create({
+    user = await User.create({
       email,
       role,
       loginType,
@@ -36,11 +37,24 @@ exports.loginOrSignInWithEmail = asyncWrapper(async (req, res) => {
     user.otp = updatedData;
     user = await user.save();
   }
-  sendLoginOtpMail(email, updatedData.code);
+  // sendLoginOtpMail(email, updatedData.code);
+  let otpData;
+  if (user?.mobile) {
+    otpData = await sendOtpToMobile(user.mobile);
+    if (otpData?.Status === "Success" && otpData?.Details) {
+      user.otp = {
+        ...updatedData,
+        sessionId: otpData.Details,
+      };
+      await user.save();
+    }
+  }
   return sendSuccess(
     res,
     200,
-    "OTP has been sent to your Email. Please check your inbox.",
-    { isFirst }
+    user?.mobile
+      ? "OTP has been sent to your mobile number."
+      : "OTP generated. Add a mobile number to receive the code via SMS.",
+    { isFirst, otpData, sessionId: otpData?.Details },
   );
 });

@@ -11,7 +11,7 @@ exports.sendSuccess = (
   });
 };
 
-exports.sendTokenResponse = (res, statusCode, message, user) => {
+exports.sendTokenResponse = (res, statusCode, message, user, extraData = {}) => {
   const token = user.getSignedJwtToken();
   const options = {
     expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
@@ -31,6 +31,7 @@ exports.sendTokenResponse = (res, statusCode, message, user) => {
   return exports.sendSuccess(res, statusCode, message, {
     user: userResponse,
     token,
+    ...extraData,
   });
 };
 

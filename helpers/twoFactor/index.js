@@ -1,4 +1,7 @@
-const { sendOtpToMobile } = require("./sendOtpToMobile");
-const { verifyOtpToMobile } = require("./verifyOtpToMobile");
+const {
+  sendOtpToMobile,
+  verifyOtpToMobile,
+  formatMobileNumber,
+} = require("../../services/otp");
 
-module.exports = { sendOtpToMobile, verifyOtpToMobile };
+module.exports = { sendOtpToMobile, verifyOtpToMobile, formatMobileNumber };

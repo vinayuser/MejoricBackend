@@ -2,10 +2,12 @@ const User = require("../../models/User");
 const Mate = require("../../models/Mate");
 // const { validateObjectId } = require("../../utils");
 const { ROLES, LOGIN_TYPES } = require("../../constants");
-const { asyncWrapper, sendSuccess, throwError, sendTokenResponse, generateOTP } = require("../../utils");
+const { asyncWrapper, sendSuccess, throwError, sendTokenResponse } = require("../../utils");
 const { uploadImage } = require("../../services/uploads");
 const { getOrCreateWallet } = require("../../services/wallet");
-const { sendLoginOtpMail, sendSignupAgreementMail } = require("../../helpers/nodeMailer");
+// const { sendLoginOtpMail, sendSignupAgreementMail } = require("../../helpers/nodeMailer");
+const { sendSignupAgreementMail } = require("../../helpers/nodeMailer");
+const { sendOtpToMobile } = require("../../services/otp");
 
 exports.register = asyncWrapper(async (req, res) => {
   let {
@@ -125,17 +127,14 @@ exports.register = asyncWrapper(async (req, res) => {
     isSignUpCompleted: true,
   };
 
-  // Generate and send email OTP on signup if email is provided and the user is NOT a mate
-  let otpCode = null;
-  if (email && !isMate) {
-    otpCode = generateOTP();
-    userData.otp = {
-      code: otpCode,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes validity
-    };
-    userData.isEmailVerified = false; // ensure explicit false
+  // Generate and send mobile OTP on signup if mobile is provided and the user is NOT a mate
+  let otpSessionId = null;
+  if (mobile && !isMate) {
+    userData.isMobileVerified = false;
+    userData.isEmailVerified = false;
   } else if (isMate) {
-    userData.isEmailVerified = true; // mates are already verified before onboarding
+    userData.isEmailVerified = true;
+    userData.isMobileVerified = true;
   }
 
   if (user) {
@@ -146,14 +145,31 @@ exports.register = asyncWrapper(async (req, res) => {
     user = await User.create(userData);
   }
 
-  if (email && otpCode) {
+  if (mobile && !isMate) {
     try {
-      sendLoginOtpMail(email, otpCode);
-      console.log(`✉️ Email verification OTP sent to ${email}: ${otpCode}`);
-    } catch (mailError) {
-      console.error("Error sending email verification OTP:", mailError);
+      const otpData = await sendOtpToMobile(mobile);
+      if (otpData?.Status === "Success" && otpData?.Details) {
+        otpSessionId = otpData.Details;
+        user.otp = {
+          sessionId: otpSessionId,
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        };
+        await user.save();
+        console.log(`📱 Mobile verification OTP sent to ${mobile}`);
+      }
+    } catch (otpError) {
+      console.error("Error sending mobile verification OTP:", otpError);
     }
   }
+
+  // if (email && otpCode) {
+  //   try {
+  //     sendLoginOtpMail(email, otpCode);
+  //     console.log(`✉️ Email verification OTP sent to ${email}: ${otpCode}`);
+  //   } catch (mailError) {
+  //     console.error("Error sending email verification OTP:", mailError);
+  //   }
+  // }
 
   if (email && !isMate && hasAgreedToTerms) {
     try {
@@ -194,5 +210,7 @@ exports.register = asyncWrapper(async (req, res) => {
     };
     await Mate.create(matePayload);
   }
-  return sendTokenResponse(res, 201, responseMessage, user);
+  return sendTokenResponse(res, 201, responseMessage, user, {
+    otpSessionId,
+  });
 });
