@@ -5,6 +5,7 @@ const { getAllUsers } = require("./getAllUsers");
 const { updateUser } = require("./updateUser");
 const { deleteUser } = require("./deleteUser");
 const { updateFcmToken } = require("./updateFcmToken");
+const { clearMateBusy } = require("./clearMateBusy");
 
 module.exports = {
   getUser,
@@ -14,4 +15,5 @@ module.exports = {
   updateUser,
   deleteUser,
   updateFcmToken,
+  clearMateBusy,
 };
