@@ -463,6 +463,13 @@ io.on("connection", (socket) => {
 // Make io accessible in controllers
 app.set("io", io);
 
+const { zoomWebhook } = require("./controllers/bookings/zoomWebhook");
+app.post(
+  "/mateandmentors/bookings/zoom/webhook",
+  express.raw({ type: "application/json" }),
+  zoomWebhook,
+);
+
 app.use(express.json({ limit: "1mb" }));
 app.use(fileUpload({
   useTempFiles: true,
