@@ -1,5 +1,6 @@
 const User = require("../../models/User");
 const Mate = require("../../models/Mate");
+const Mentor = require("../../models/Mentor");
 const { throwError } = require("../../utils");
 const { uploadImage, deleteImage } = require("../uploads");
 const { isAdult } = require("../../helpers/users");
@@ -10,8 +11,10 @@ exports.updateUserById = async (userId, payload, image) => {
   const user = await User.findById(userId);
   if (!user || user?.isDeleted) throwError(404, "User not found");
   const isMate = user.role === ROLES.MATE;
+  const isMentor = user.role === ROLES.MENTOR;
 
   const mateUpdate = {};
+  const mentorUpdate = {};
   if (payload) {
     let {
       name,
@@ -29,7 +32,8 @@ exports.updateUserById = async (userId, payload, image) => {
       languages,
       isActive,
       isAvailable,
-      isOnline
+      isOnline,
+      mentorType,
     } = payload;
     if (
       typeof pricePerMin === "undefined" &&
@@ -55,7 +59,7 @@ exports.updateUserById = async (userId, payload, image) => {
         throwError(400, "Email already exists with another user");
       }
       user.email = email;
-      if (!isMate) {
+      if (!isMate && !isMentor) {
         user.isEmailVerified = false;
       }
     }
@@ -116,6 +120,40 @@ exports.updateUserById = async (userId, payload, image) => {
           .filter((l) => typeof l === "string")
           .map((l) => l.trim())
           .filter(Boolean);
+      }
+    }
+    if (isMentor) {
+      if (bio !== undefined) {
+        mentorUpdate.bio = bio?.trim();
+      }
+      if (typeof experience !== "undefined") {
+        if (Number(experience) < 0) throwError(422, "experience must be >= 0");
+        mentorUpdate.experience = Number(experience);
+      }
+      if (typeof specifications !== "undefined") {
+        const specificationsArr = Array.isArray(specifications)
+          ? specifications
+          : specifications.split(",");
+        mentorUpdate.specifications = specificationsArr
+          .filter((s) => typeof s === "string")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+      if (typeof languages !== "undefined") {
+        const languagesArr = Array.isArray(languages)
+          ? languages
+          : languages.split(",");
+        mentorUpdate.languages = languagesArr
+          .filter((l) => typeof l === "string")
+          .map((l) => l.trim())
+          .filter(Boolean);
+      }
+      if (typeof mentorType !== "undefined") {
+        const normalizedMentorType = String(mentorType).toLowerCase();
+        if (!["emotional", "professional"].includes(normalizedMentorType)) {
+          throwError(422, "mentorType must be emotional or professional");
+        }
+        mentorUpdate.mentorType = normalizedMentorType;
       }
     }
   }
@@ -188,6 +226,42 @@ exports.updateUserById = async (userId, payload, image) => {
       }
     }
   }
+
+  if (isMentor) {
+    const baseSync = {
+      name: user.name,
+      email: user.email,
+      mobile: user.mobile,
+    };
+
+    const hasMentorChanges = Object.keys(mentorUpdate).length > 0;
+    if (
+      hasMentorChanges ||
+      baseSync.name ||
+      baseSync.email ||
+      baseSync.mobile
+    ) {
+      const existingMentor = await Mentor.findOne({
+        userId: user._id,
+        isDeleted: false,
+      });
+
+      if (existingMentor) {
+        await Mentor.updateOne(
+          { _id: existingMentor._id },
+          { $set: { ...baseSync, ...mentorUpdate } },
+        );
+      } else if (typeof mentorUpdate.mentorType !== "undefined") {
+        await Mentor.create({
+          userId: user._id,
+          ...baseSync,
+          ...mentorUpdate,
+          experience: mentorUpdate.experience ?? 0,
+        });
+      }
+    }
+  }
+
   const { password, otp, ...userData } = user.toObject();
   return userData;
 };

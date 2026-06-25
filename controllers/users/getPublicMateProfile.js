@@ -8,10 +8,9 @@ exports.getPublicMateProfile = asyncWrapper(async (req, res) => {
   
   const user = await getUserById(id);
   
-  if (user.role !== ROLES.MATE) {
-    throwError(404, "Mate profile not found or user is not a mate");
+  if (![ROLES.MATE, ROLES.MENTOR].includes(user.role)) {
+    throwError(404, "Profile not found");
   }
-  
-  // Return only necessary public info
-  return sendSuccess(res, 200, "Mate profile fetched successfully", user);
+
+  return sendSuccess(res, 200, "Profile fetched successfully", user);
 });

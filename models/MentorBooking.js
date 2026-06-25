@@ -54,8 +54,16 @@ const mentorBookingSchema = new mongoose.Schema(
     actualDurationSeconds: { type: Number },
     emailStatus: {
       type: String,
-      enum: ["pending", "sent", "failed"],
+      enum: ["pending", "sent", "failed", "partial"],
       default: "pending",
+    },
+    remindersSent: {
+      confirmationUser: { type: Boolean, default: false },
+      confirmationMentor: { type: Boolean, default: false },
+      halfHourUser: { type: Boolean, default: false },
+      halfHourMentor: { type: Boolean, default: false },
+      fiveMinUser: { type: Boolean, default: false },
+      fiveMinMentor: { type: Boolean, default: false },
     },
     isDeleted: { type: Boolean, default: false, index: true },
   },

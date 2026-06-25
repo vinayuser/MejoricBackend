@@ -56,6 +56,12 @@ exports.validateUpdateUser = (data) => {
     isOnline: Joi.boolean().messages({
       "boolean.base": "isOnline must be a boolean",
     }),
+    mentorType: Joi.string()
+      .valid("emotional", "professional")
+      .optional()
+      .messages({
+        "any.only": "mentorType must be emotional or professional",
+      }),
   });
   return schema.validate(data, { abortEarly: false });
 };
@@ -79,6 +85,19 @@ exports.validateGetAllUsersQuery = (data) => {
     sortOrder: Joi.string().valid("asc", "desc").allow("").messages({
       "any.only": "sortOrder must be either asc or desc",
     }),
+    mentorType: Joi.string().valid("emotional", "professional").optional(),
+    isActive: Joi.alternatives()
+      .try(Joi.boolean(), Joi.string().valid("true", "false"))
+      .optional(),
+    search: Joi.string().allow("").optional(),
+    language: Joi.string().allow("").optional(),
+    languages: Joi.alternatives()
+      .try(Joi.string(), Joi.array().items(Joi.string()))
+      .optional(),
+    specification: Joi.string().allow("").optional(),
+    specifications: Joi.alternatives()
+      .try(Joi.string(), Joi.array().items(Joi.string()))
+      .optional(),
   }).unknown(true);
   return schema.validate(data, { abortEarly: false });
 };

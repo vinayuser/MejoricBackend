@@ -1,5 +1,6 @@
 const User = require("../../models/User");
 const Mate = require("../../models/Mate");
+const Mentor = require("../../models/Mentor");
 // const { validateObjectId } = require("../../utils");
 const { ROLES, LOGIN_TYPES } = require("../../constants");
 const { asyncWrapper, sendSuccess, throwError, sendTokenResponse } = require("../../utils");
@@ -28,6 +29,7 @@ exports.register = asyncWrapper(async (req, res) => {
     experience,
     specifications,
     languages,
+    mentorType,
     guestId,
   } = req.body;
   const image = req.files?.image;
@@ -40,9 +42,10 @@ exports.register = asyncWrapper(async (req, res) => {
   role = role?.toLowerCase() || ROLES.USER;
   loginType = loginType?.toLowerCase() || LOGIN_TYPES.PASSWORD;
   const isMate = role === ROLES.MATE;
+  const isMentor = role === ROLES.MENTOR;
   const hasAgreedToTerms =
     agreedToTerms === true || agreedToTerms === "true" || agreedToTerms === 1;
-  if (!isMate && !hasAgreedToTerms) {
+  if (!isMate && !isMentor && !hasAgreedToTerms) {
     throwError(
       422,
       "You must agree to the Terms and Conditions and Privacy Policy to sign up.",
@@ -51,21 +54,7 @@ exports.register = asyncWrapper(async (req, res) => {
   if (password && cofirmPassword && password !== cofirmPassword) {
     throwError(422, "Password and confirm password must be same");
   }
-  if (isMate) {
-    // if (!categoryId) throwError(422, "categoryId is required");
-    // validateObjectId(categoryId, "categoryId");
-    // if (typeof pricePerMin === "undefined")
-    //   throwError(422, "pricePerMin is required");
-    if (pricePerMin && Number(pricePerMin) <= 0) {
-      throwError(422, "pricePerMin must be > 0");
-    }
-    // if (typeof priceUnit === "undefined")
-    //   throwError(422, "priceUnit is required");
-    // if (typeof experience === "undefined")
-    //   throwError(422, "experience is required");
-    if (experience && Number(experience) < 0) {
-      throwError(422, "experience must be >= 0");
-    }
+  if (isMate || isMentor) {
     if (typeof specifications !== "undefined") {
       const specificationsArr = Array.isArray(specifications)
         ? specifications
@@ -88,6 +77,26 @@ exports.register = asyncWrapper(async (req, res) => {
     } else {
       languages = [];
     }
+  }
+  if (isMate) {
+    if (pricePerMin && Number(pricePerMin) <= 0) {
+      throwError(422, "pricePerMin must be > 0");
+    }
+    if (experience && Number(experience) < 0) {
+      throwError(422, "experience must be >= 0");
+    }
+  }
+  if (isMentor) {
+    const normalizedMentorType = mentorType
+      ? String(mentorType).toLowerCase()
+      : "";
+    if (!["emotional", "professional"].includes(normalizedMentorType)) {
+      throwError(422, "mentorType must be emotional or professional");
+    }
+    if (experience && Number(experience) < 0) {
+      throwError(422, "experience must be >= 0");
+    }
+    mentorType = normalizedMentorType;
   }
   let user;
   if (guestId) {
@@ -129,10 +138,10 @@ exports.register = asyncWrapper(async (req, res) => {
 
   // Generate and send mobile OTP on signup if mobile is provided and the user is NOT a mate
   let otpSessionId = null;
-  if (mobile && !isMate) {
+  if (mobile && !isMate && !isMentor) {
     userData.isMobileVerified = false;
     userData.isEmailVerified = false;
-  } else if (isMate) {
+  } else if (isMate || isMentor) {
     userData.isEmailVerified = true;
     userData.isMobileVerified = true;
   }
@@ -145,7 +154,7 @@ exports.register = asyncWrapper(async (req, res) => {
     user = await User.create(userData);
   }
 
-  if (mobile && !isMate) {
+  if (mobile && !isMate && !isMentor) {
     try {
       const otpData = await sendOtpToMobile(mobile);
       if (otpData?.Status === "Success" && otpData?.Details) {
@@ -171,7 +180,7 @@ exports.register = asyncWrapper(async (req, res) => {
   //   }
   // }
 
-  if (email && !isMate && hasAgreedToTerms) {
+  if (email && !isMate && !isMentor && hasAgreedToTerms) {
     try {
       await sendSignupAgreementMail({
         email,
@@ -182,8 +191,8 @@ exports.register = asyncWrapper(async (req, res) => {
       console.error("Error sending signup agreement email:", mailError);
     }
   }
-  let responseMessage = "Mate registered successfully";
-  if (user && !isMate) {
+  let responseMessage = "User registered successfully";
+  if (user && !isMate && !isMentor) {
     await getOrCreateWallet(user._id);
     const welcomeRecharge = parseInt(process.env.FREE_WALLET_RECHARGE) || 100;
     responseMessage = `User registered successfully! Welcome, you received a ₹${welcomeRecharge} welcome wallet recharge.`;
@@ -195,20 +204,33 @@ exports.register = asyncWrapper(async (req, res) => {
         : pricePerHour != null && pricePerHour !== ""
           ? Number(pricePerHour)
           : 12;
-    const matePayload = {
+    await Mate.create({
       userId: user._id,
       name: user.name,
       email: user.email,
       mobile: user.mobile,
       bio,
-      // categoryId,
       pricePerMin: effectivePrice,
       priceUnit: priceUnit || "RUPEE",
       experience: experience ? Number(experience) : 0,
       specifications,
       languages,
-    };
-    await Mate.create(matePayload);
+    });
+    responseMessage = "Mate registered successfully";
+  }
+  if (isMentor) {
+    await Mentor.create({
+      userId: user._id,
+      name: user.name,
+      email: user.email,
+      mobile: user.mobile,
+      bio,
+      experience: experience ? Number(experience) : 0,
+      specifications,
+      languages,
+      mentorType,
+    });
+    responseMessage = "Mentor registered successfully";
   }
   return sendTokenResponse(res, 201, responseMessage, user, {
     otpSessionId,

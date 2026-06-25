@@ -1,5 +1,6 @@
 const User = require("../../models/User");
 const Mate = require("../../models/Mate");
+const Mentor = require("../../models/Mentor");
 const { throwError } = require("../../utils");
 const { ROLES } = require("../../constants");
 
@@ -12,6 +13,13 @@ exports.deleteUserById = async (userId) => {
 
   if (user.role === ROLES.MATE) {
     await Mate.updateOne(
+      { userId: user._id, isDeleted: false },
+      { $set: { isDeleted: true } },
+    );
+  }
+
+  if (user.role === ROLES.MENTOR) {
+    await Mentor.updateOne(
       { userId: user._id, isDeleted: false },
       { $set: { isDeleted: true } },
     );

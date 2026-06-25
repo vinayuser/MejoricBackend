@@ -91,3 +91,13 @@ exports.validateMentorAppointmentsQuery = (payload) => {
 
   return schema.validate(payload, { abortEarly: false });
 };
+
+exports.validateUserBookingsQuery = (payload) => {
+  const schema = Joi.object({
+    tab: Joi.string().valid("upcoming", "past").default("upcoming"),
+    page: Joi.number().integer().min(1).default(1),
+    limit: Joi.number().integer().min(1).max(50).default(20),
+  });
+
+  return schema.validate(payload, { abortEarly: false });
+};

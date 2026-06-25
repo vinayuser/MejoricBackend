@@ -62,24 +62,28 @@ exports.getAllUsers = async (query) => {
   const pipeline = [{ $match: userMatch }];
 
   const needMateJoin =
-    sortBy === "isAvailable" ||
-    (userMatch.role && userMatch.role === ROLES.MATE) ||
-    typeof role === "undefined" ||
-    typeof language !== "undefined" ||
-    typeof languages !== "undefined" ||
-    // typeof categoryId !== "undefined" ||
-    typeof pricePerHour !== "undefined" ||
-    typeof minPricePerHour !== "undefined" ||
-    typeof maxPricePerHour !== "undefined" ||
-    typeof pricePerMin !== "undefined" ||
-    typeof minPricePerMin !== "undefined" ||
-    typeof maxPricePerMin !== "undefined" ||
-    typeof priceUnit !== "undefined" ||
-    typeof experience !== "undefined" ||
-    typeof minExperience !== "undefined" ||
-    typeof maxExperience !== "undefined" ||
-    typeof specification !== "undefined" ||
-    typeof specifications !== "undefined";
+    userMatch.role !== ROLES.MENTOR &&
+    (sortBy === "isAvailable" ||
+      (userMatch.role && userMatch.role === ROLES.MATE) ||
+      (typeof role === "undefined" && typeof query.mentorType === "undefined") ||
+      typeof language !== "undefined" ||
+      typeof languages !== "undefined" ||
+      typeof pricePerHour !== "undefined" ||
+      typeof minPricePerHour !== "undefined" ||
+      typeof maxPricePerHour !== "undefined" ||
+      typeof pricePerMin !== "undefined" ||
+      typeof minPricePerMin !== "undefined" ||
+      typeof maxPricePerMin !== "undefined" ||
+      typeof priceUnit !== "undefined" ||
+      typeof experience !== "undefined" ||
+      typeof minExperience !== "undefined" ||
+      typeof maxExperience !== "undefined" ||
+      typeof specification !== "undefined" ||
+      typeof specifications !== "undefined");
+
+  const needMentorJoin =
+    (userMatch.role && userMatch.role === ROLES.MENTOR) ||
+    typeof query.mentorType !== "undefined";
 
   if (needMateJoin) {
     pipeline.push({
@@ -166,21 +170,78 @@ exports.getAllUsers = async (query) => {
 
     if (Object.keys(mateMatch).length) pipeline.push({ $match: mateMatch });
 
-    // pipeline.push({
-    //   $lookup: {
-    //     from: "categories",
-    //     localField: "mate.categoryId",
-    //     foreignField: "_id",
-    //     as: "category",
-    //   },
-    // });
-
     pipeline.push({
       $unwind: {
         path: "$category",
         preserveNullAndEmptyArrays: true,
       },
     });
+  }
+
+  if (needMentorJoin) {
+    pipeline.push({
+      $lookup: {
+        from: "mentors",
+        let: { userId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$userId", "$$userId"] },
+              isDeleted: false,
+            },
+          },
+        ],
+        as: "mentor",
+      },
+    });
+
+    const mustHaveMentorDoc = userMatch.role === ROLES.MENTOR;
+    pipeline.push({
+      $unwind: {
+        path: "$mentor",
+        preserveNullAndEmptyArrays: !mustHaveMentorDoc,
+      },
+    });
+
+    const mentorMatch = {};
+
+    const mentorLangs = languages || language;
+    if (mentorLangs) {
+      const arr = Array.isArray(mentorLangs)
+        ? mentorLangs
+        : String(mentorLangs)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+      if (arr.length) mentorMatch["mentor.languages"] = { $in: arr };
+    }
+
+    if (typeof experience !== "undefined") {
+      mentorMatch["mentor.experience"] = Number(experience);
+    } else if (minExperience || maxExperience) {
+      mentorMatch["mentor.experience"] = {};
+      if (minExperience)
+        mentorMatch["mentor.experience"].$gte = Number(minExperience);
+      if (maxExperience)
+        mentorMatch["mentor.experience"].$lte = Number(maxExperience);
+    }
+
+    const mentorSpecs = specifications || specification;
+    if (mentorSpecs) {
+      const arr = Array.isArray(mentorSpecs)
+        ? mentorSpecs
+        : String(mentorSpecs)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+      if (arr.length) mentorMatch["mentor.specifications"] = { $in: arr };
+    }
+
+    if (query.mentorType) {
+      mentorMatch["mentor.mentorType"] = String(query.mentorType).toLowerCase();
+    }
+
+    if (Object.keys(mentorMatch).length) pipeline.push({ $match: mentorMatch });
   }
 
   pipeline.push({
@@ -206,6 +267,12 @@ exports.getAllUsers = async (query) => {
       "mate.experience": 1,
       "mate.bio": 1,
       "mate.priceUnit": 1,
+      "mentor.name": 1,
+      "mentor.specifications": 1,
+      "mentor.languages": 1,
+      "mentor.experience": 1,
+      "mentor.bio": 1,
+      "mentor.mentorType": 1,
     },
   });
 

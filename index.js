@@ -26,6 +26,7 @@ const { mongoDb } = require("./database/mongoDb");
 const { errorHandler } = require("./middlewares");
 const { throwError } = require("./utils");
 const allRoutes = require("./routes");
+const { startBookingReminderJob, stopBookingReminderJob } = require("./jobs/bookingReminders");
 
 // Models and Constants
 const User = require("./models/User");
@@ -517,6 +518,7 @@ const PORT =
   process.env.PORT || (process.env.APP_ENV === "local" ? 6002 : 3002);
 server.listen(PORT, () => {
   console.log(`✅ Mejoric Server running on http://localhost:${PORT}`);
+  startBookingReminderJob();
 });
 
 const gracefulShutdown = async (signal) => {
@@ -553,6 +555,7 @@ const gracefulShutdown = async (signal) => {
   console.log("⏱️ [Graceful Shutdown] All active chat sessions billed.");
 
   // 3. Close DB connection
+  stopBookingReminderJob();
   try {
     await mongoose.connection.close();
     console.log("✅ [Graceful Shutdown] MongoDB connection closed.");

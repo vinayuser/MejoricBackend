@@ -5,6 +5,7 @@ const {
   cleanJoiError,
   validateObjectId,
 } = require("../../utils");
+const mongoose = require("mongoose");
 const { ROLES } = require("../../constants");
 const {
   createBooking,
@@ -15,6 +16,7 @@ const {
   getMentorAvailability,
   saveMentorAvailability,
   getMentorAppointments,
+  getUserBookings,
 } = require("../../services/bookings");
 const {
   validateCreateBooking,
@@ -24,10 +26,11 @@ const {
   validateSaveAvailability,
   validateMentorAppointmentsQuery,
   validateAvailableDatesQuery,
+  validateUserBookingsQuery,
 } = require("../../validator/bookings");
 
 function ensureMentor(req) {
-  if (req.role !== ROLES.MATE) {
+  if (req.role !== ROLES.MENTOR) {
     throwError(403, "Only mentors can access this resource");
   }
 }
@@ -60,9 +63,12 @@ exports.getPublicAvailability = asyncWrapper(async (req, res) => {
   const { error, value } = validateAvailabilityQuery(req.query);
   if (error) throwError(422, cleanJoiError(error));
 
-  validateObjectId(req.params.mentorId, "Mentor ID");
+  const { mentorId } = req.params;
+  if (!mentorId || mentorId === "me" || !mongoose.Types.ObjectId.isValid(mentorId)) {
+    return sendSuccess(res, 200, "Available slots fetched", { slots: [] });
+  }
 
-  const slots = await getPublicAvailableSlots(req.params.mentorId, value.dateKey);
+  const slots = await getPublicAvailableSlots(mentorId, value.dateKey);
   return sendSuccess(res, 200, "Available slots fetched", { slots });
 });
 
@@ -112,6 +118,14 @@ exports.getMyAppointments = asyncWrapper(async (req, res) => {
 
   const result = await getMentorAppointments(req.userId, value);
   return sendSuccess(res, 200, "Appointments fetched", result);
+});
+
+exports.getMyBookings = asyncWrapper(async (req, res) => {
+  const { error, value } = validateUserBookingsQuery(req.query);
+  if (error) throwError(422, cleanJoiError(error));
+
+  const result = await getUserBookings(req.userId, value);
+  return sendSuccess(res, 200, "Bookings fetched", result);
 });
 
 exports.getAdminBookings = asyncWrapper(async (req, res) => {

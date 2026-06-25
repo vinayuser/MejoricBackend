@@ -9,10 +9,13 @@ const {
   slotIdToDate,
   toDateKey,
 } = require("../../helpers/bookingSlots");
+const {
+  sendBookingConfirmationEmails,
+} = require("./emailNotifications");
 
 async function assertMentorUser(mentorId) {
   const mentor = await User.findById(mentorId);
-  if (!mentor || mentor.role !== ROLES.MATE) {
+  if (!mentor || mentor.role !== ROLES.MENTOR) {
     throwError(404, "Mentor not found");
   }
   return mentor;
@@ -82,6 +85,12 @@ exports.createBooking = async ({
 
   await booking.populate("mentorId", "name email image");
 
+  setImmediate(() => {
+    sendBookingConfirmationEmails(booking._id).catch((error) => {
+      console.error(`❌ Failed to send booking confirmation emails for ${booking._id}:`, error);
+    });
+  });
+
   return formatBookingResponse(booking, mentor);
 };
 
@@ -97,7 +106,10 @@ exports.getBookedSlotIds = async (mentorId, dateKey) => {
 };
 
 exports.getPublicAvailableSlots = async (mentorId, dateKey) => {
-  await assertMentorUser(mentorId);
+  const mentor = await User.findById(mentorId);
+  if (!mentor || mentor.role !== ROLES.MENTOR) {
+    return [];
+  }
 
   const availability = await MentorAvailability.findOne({
     mentorId,
@@ -119,7 +131,10 @@ exports.getPublicAvailableSlots = async (mentorId, dateKey) => {
 };
 
 exports.getPublicAvailableDates = async (mentorId, year, month) => {
-  await assertMentorUser(mentorId);
+  const mentor = await User.findById(mentorId);
+  if (!mentor || mentor.role !== ROLES.MENTOR) {
+    return [];
+  }
 
   const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
   const todayKey = toDateKey(new Date());
@@ -201,6 +216,63 @@ exports.saveMentorAvailability = async (mentorId, dateKey, slotIds) => {
     dateKey,
     selectedSlotIds: availability.slotIds,
     bookedSlotIds,
+  };
+};
+
+exports.getUserBookings = async (userId, { tab = "upcoming", page = 1, limit = 20 }) => {
+  const user = await User.findById(userId).select("email");
+  if (!user) {
+    throwError(404, "User not found");
+  }
+
+  const identityOr = [{ userId }];
+  if (user.email) {
+    identityOr.push({ "guestDetails.email": user.email.toLowerCase() });
+  }
+
+  const skip = (page - 1) * limit;
+  const now = new Date();
+  let filter = {
+    isDeleted: false,
+    $or: identityOr,
+  };
+
+  if (tab === "upcoming") {
+    filter.status = { $in: ["scheduled", "in_progress"] };
+    filter.scheduledAt = { $gte: now };
+  } else {
+    filter = {
+      isDeleted: false,
+      $and: [
+        { $or: identityOr },
+        {
+          $or: [
+            { status: { $in: ["completed", "cancelled", "no_show"] } },
+            {
+              scheduledAt: { $lt: now },
+              status: { $nin: ["cancelled", "no_show"] },
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  const [total, bookings] = await Promise.all([
+    MentorBooking.countDocuments(filter),
+    MentorBooking.find(filter)
+      .populate("mentorId", "name email image")
+      .sort({ scheduledAt: tab === "upcoming" ? 1 : -1 })
+      .skip(skip)
+      .limit(limit),
+  ]);
+
+  return {
+    total,
+    totalPages: Math.ceil(total / limit) || 1,
+    page,
+    limit,
+    data: bookings.map(formatUserBooking),
   };
 };
 
@@ -371,8 +443,31 @@ function formatBookingResponse(booking, mentor) {
     zoomMeetingId: booking.zoomMeetingId,
     zoomPassword: booking.zoomPassword,
     zoomJoinUrl: booking.zoomJoinUrl,
-    zoomStartUrl: booking.zoomStartUrl,
     emailStatus: booking.emailStatus,
+    createdAt: booking.createdAt,
+  };
+}
+
+function formatUserBooking(booking) {
+  const mentor = booking.mentorId;
+  return {
+    _id: booking._id,
+    status: booking.status,
+    scheduledAt: booking.scheduledAt,
+    slotLabel: booking.slotLabel,
+    dateKey: booking.dateKey,
+    durationMinutes: booking.durationMinutes,
+    mentor: mentor
+      ? {
+          _id: mentor._id,
+          name: mentor.name,
+          email: mentor.email,
+          image: mentor.image,
+        }
+      : null,
+    zoomMeetingId: booking.zoomMeetingId,
+    zoomJoinUrl: booking.zoomJoinUrl,
+    zoomPassword: booking.zoomPassword,
     createdAt: booking.createdAt,
   };
 }
@@ -389,7 +484,6 @@ function formatMentorAppointment(booking) {
     actualStartTime: booking.actualStartTime,
     actualEndTime: booking.actualEndTime,
     zoomMeetingId: booking.zoomMeetingId,
-    zoomJoinUrl: booking.zoomJoinUrl,
     zoomStartUrl: booking.zoomStartUrl,
     zoomPassword: booking.zoomPassword,
     createdAt: booking.createdAt,
@@ -414,6 +508,8 @@ function formatAdminBooking(booking) {
       : null,
     zoomMeetingId: booking.zoomMeetingId,
     zoomJoinUrl: booking.zoomJoinUrl,
+    zoomStartUrl: booking.zoomStartUrl,
+    zoomPassword: booking.zoomPassword,
     zoomProvider: booking.zoomProvider,
     emailStatus: booking.emailStatus,
     guestDetails: booking.guestDetails,
