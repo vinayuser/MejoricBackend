@@ -32,6 +32,8 @@ const callSessionSchema = new mongoose.Schema(
       default: "INITIATED",
     },
     roomId: String,
+    agoraCallerUid: Number,
+    agoraReceiverUid: Number,
     tokenCaller: String,
     tokenReceiver: String,
     startTime: Date,

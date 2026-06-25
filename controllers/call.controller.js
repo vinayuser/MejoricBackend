@@ -5,7 +5,7 @@ const CallSession = require("../models/CallSessions");
 const CallLog = require("../models/CallLogs");
 const WalletTransaction = require("../models/WalletTransaction");
 
-const { createRoom, createToken } = require("../helpers/enablex.helper");
+const { buildChannelName, createRtcToken, getAgoraAppId, allocateCallAgoraUids } = require("../helpers/agora.helper");
 const { sendPushNotification } = require("../helpers/notification.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
@@ -82,10 +82,9 @@ const initiateCall = async (req, res, next) => {
         return throwError(400, "Receiver is busy! Please try calling later.");
       }
     }
-    // EnableX - Create Room
-    const roomName = `Call_${callerId}_to_${receiverId}`;
-    const roomData = await createRoom(roomName, callType);
-    const roomId = roomData.room.room_id;
+    // Agora RTC channel + per-session UIDs (unique per call, avoids UID_CONFLICT)
+    const channelName = buildChannelName(callerId, receiverId);
+    const roomId = channelName;
     let remainingMinutes = 0;
     if (callType == "AUDIO") {
       remainingMinutes = Math.floor(
@@ -96,24 +95,23 @@ const initiateCall = async (req, res, next) => {
         wallet.balances?.INR / minimumBalanceRequired,
       );
     }
-    // Create Token for Caller
-    const callerToken = await createToken(
-      roomId,
-      callerId.toString(),
-      callType,
-      "participant",
-    );
-    // Create Session DB
+
     const callSession = await CallSession.create({
       callerId,
       receiverId,
       callType,
       callStatus: "INITIATED",
       roomId,
-      tokenCaller: callerToken,
       callChargePerMin: minimumBalanceRequired,
     });
-    // Add to CallLog
+
+    const { callerUid, receiverUid } = allocateCallAgoraUids(callSession._id);
+    const callerToken = createRtcToken(channelName, callerUid);
+    callSession.agoraCallerUid = callerUid;
+    callSession.agoraReceiverUid = receiverUid;
+    callSession.tokenCaller = callerToken;
+    await callSession.save();
+
     await CallLog.create({
       callSessionId: callSession._id,
       event: "INITIATED",
@@ -153,7 +151,10 @@ const initiateCall = async (req, res, next) => {
       data: {
         callSessionId: callSession._id,
         roomId,
+        channel: roomId,
         callerToken,
+        agoraAppId: getAgoraAppId(),
+        uid: callerUid,
         remainingMinutes,
       },
     });
@@ -183,13 +184,20 @@ const acceptCall = async (req, res, next) => {
         `Call cannot be accepted. Current status is ${callSession.callStatus}`,
       );
     }
-    // Generate Token for Receiver
-    const receiverToken = await createToken(
-      callSession.roomId,
-      receiverId.toString(),
-      callSession.callType,
-      "participant",
-    );
+    const { callerUid, receiverUid } =
+      callSession.agoraCallerUid && callSession.agoraReceiverUid
+        ? {
+            callerUid: callSession.agoraCallerUid,
+            receiverUid: callSession.agoraReceiverUid,
+          }
+        : allocateCallAgoraUids(callSession._id);
+
+    if (!callSession.agoraCallerUid || !callSession.agoraReceiverUid) {
+      callSession.agoraCallerUid = callerUid;
+      callSession.agoraReceiverUid = receiverUid;
+    }
+
+    const receiverToken = createRtcToken(callSession.roomId, receiverUid);
     callSession.callStatus = "ACCEPTED";
     callSession.tokenReceiver = receiverToken;
     callSession.startTime = new Date();
@@ -209,7 +217,20 @@ const acceptCall = async (req, res, next) => {
         body: "Receiver has accepted the call",
         type: "CALL",
         referenceId: callSession._id,
-        data: { event: "ACCEPTED" },
+        data: {
+          event: "ACCEPTED",
+          callSessionId: callSession._id.toString(),
+          callStartedAt: callSession.startTime.toISOString(),
+        },
+      });
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${callSession.callerId._id}`).emit("notification", {
+        type: "CALL_ACCEPTED",
+        callSessionId: callSession._id.toString(),
+        callStartedAt: callSession.startTime.toISOString(),
       });
     }
     if (receiver && receiver.role == ROLES.MATE) {
@@ -224,7 +245,11 @@ const acceptCall = async (req, res, next) => {
       message: "Call accepted",
       data: {
         roomId: callSession.roomId,
+        channel: callSession.roomId,
         receiverToken,
+        agoraAppId: getAgoraAppId(),
+        uid: receiverUid,
+        callStartedAt: callSession.startTime.toISOString(),
       },
     });
   } catch (error) {
