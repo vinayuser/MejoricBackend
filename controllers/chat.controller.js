@@ -8,6 +8,11 @@ const { sendPushNotification } = require("../helpers/notification.helper");
 const { processChatBilling } = require("../helpers/chatBilling.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
+const {
+  getSignupTrialRemainingSeconds,
+  hasPaidWalletRecharge,
+  ensureSignupTrialStarted,
+} = require("../helpers/signupTrial.helper");
 
 const sendMessage = async (req, res, next) => {
   try {
@@ -28,9 +33,27 @@ const sendMessage = async (req, res, next) => {
     const sender = await User.findById(senderId);
     const recipient = await User.findById(recipientId);
 
+    if (!sender) {
+      return throwError(404, "Sender not found");
+    }
+
     if (!recipient) {
       console.log(`[Server Chat] Recipient not found: ${recipientId}`);
       return throwError(404, "Recipient not found");
+    }
+
+    if (sender.role === ROLES.USER) {
+      const refreshedSender = await ensureSignupTrialStarted(sender);
+      const paidRecharge = await hasPaidWalletRecharge(senderId);
+      if (!paidRecharge) {
+        const trialRemaining = getSignupTrialRemainingSeconds(refreshedSender);
+        if (trialRemaining <= 0) {
+          return throwError(
+            403,
+            "Your free 10-minute signup chat period has ended. Please recharge your wallet to continue chatting.",
+          );
+        }
+      }
     }
 
     // Determine deterministic conversationId for socket room
@@ -144,21 +167,22 @@ const initiateChat = async (req, res, next) => {
     }
 
     if (sender.role === ROLES.USER) {
-      const WalletTransaction = require("../models/WalletTransaction");
-      const hasRecharged = await WalletTransaction.exists({
-        userId: senderId,
-        type: "CREDIT",
-        status: "SUCCESS",
-        source: { $in: ["RAZORPAY", "ADMIN", "MOCK_PAYMENT"] }
-      });
-      if (!hasRecharged) {
-        return throwError(400, "Free welcome credits cannot be used for chat. Please recharge your wallet to start chatting.");
-      }
-
-      const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
-      const balance = wallet?.balances?.INR ?? 0;
-      if (!wallet || balance <= 0) {
-        return throwError(400, "Your wallet balance is exhausted. Please recharge to continue using chats or calls.");
+      const refreshedSender = await ensureSignupTrialStarted(sender);
+      const paidRecharge = await hasPaidWalletRecharge(senderId);
+      if (paidRecharge) {
+        const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
+        const balance = wallet?.balances?.INR ?? 0;
+        if (!wallet || balance <= 0) {
+          return throwError(400, "Your wallet balance is exhausted. Please recharge to continue using chats or calls.");
+        }
+      } else {
+        const trialRemaining = getSignupTrialRemainingSeconds(refreshedSender);
+        if (trialRemaining <= 0) {
+          return throwError(
+            403,
+            "Your free 10-minute signup chat period has ended. Please recharge your wallet to continue chatting.",
+          );
+        }
       }
     }
 

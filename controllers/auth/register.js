@@ -31,6 +31,8 @@ exports.register = asyncWrapper(async (req, res) => {
     languages,
     mentorType,
     guestId,
+    age,
+    city,
   } = req.body;
   const image = req.files?.image;
   if (!mobile && !email) {
@@ -50,6 +52,25 @@ exports.register = asyncWrapper(async (req, res) => {
       422,
       "You must agree to the Terms and Conditions and Privacy Policy to sign up.",
     );
+  }
+  if (!isMate && !isMentor) {
+    if (!email) {
+      throwError(422, "Email is required");
+    }
+    if (age === undefined || age === null || age === "") {
+      throwError(422, "Age is required");
+    }
+    const parsedAge = Number(age);
+    if (!Number.isFinite(parsedAge) || parsedAge < 18 || parsedAge > 100) {
+      throwError(422, "Age must be between 18 and 100");
+    }
+    if (!city || !String(city).trim()) {
+      throwError(422, "City is required");
+    }
+    if (!password) {
+      password = email;
+      cofirmPassword = email;
+    }
   }
   if (password && cofirmPassword && password !== cofirmPassword) {
     throwError(422, "Password and confirm password must be same");
@@ -109,14 +130,26 @@ exports.register = asyncWrapper(async (req, res) => {
 
   if (email) {
     const existingEmailUser = await User.findOne({ email, role, isDeleted: false });
-    if (existingEmailUser && String(existingEmailUser._id) !== String(guestId)) {
+    if (
+      existingEmailUser &&
+      String(existingEmailUser._id) !== String(guestId || "") &&
+      String(existingEmailUser._id) !== String(user?._id || "")
+    ) {
       throwError(400, "User with this email already exists");
     }
   }
   if (mobile) {
     const existingMobileUser = await User.findOne({ mobile, role, isDeleted: false });
-    if (existingMobileUser && String(existingMobileUser._id) !== String(guestId)) {
-      throwError(400, "User with mobile number already exists");
+    if (existingMobileUser) {
+      const isGuestConversion =
+        guestId && String(existingMobileUser._id) === String(guestId);
+      const isPendingSignup = !existingMobileUser.isSignUpCompleted;
+      if (!isGuestConversion && !isPendingSignup) {
+        throwError(400, "User with mobile number already exists");
+      }
+      if (isPendingSignup && !user) {
+        user = existingMobileUser;
+      }
     }
   }
   let imageUrl;
@@ -136,8 +169,16 @@ exports.register = asyncWrapper(async (req, res) => {
     isSignUpCompleted: true,
   };
 
+  if (!isMate && !isMentor) {
+    userData.age = Number(age);
+    userData.city = String(city).trim();
+  }
+
   // Generate and send mobile OTP on signup if mobile is provided and the user is NOT a mate
   let otpSessionId = null;
+  if (!isMate && !isMentor) {
+    userData.signupChatTrialStartedAt = new Date();
+  }
   if (mobile && !isMate && !isMentor) {
     userData.isMobileVerified = false;
     userData.isEmailVerified = false;

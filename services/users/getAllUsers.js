@@ -30,6 +30,9 @@ exports.getAllUsers = async (query) => {
     maxExperience,
     sortBy = "createdAt",
     sortOrder = "desc",
+    registeredDate,
+    createdFrom,
+    createdTo,
   } = query;
 
   page = page ? Number(page) : 1;
@@ -53,10 +56,34 @@ exports.getAllUsers = async (query) => {
     userMatch.$or = [
       { name: { $regex: new RegExp(search, "i") } },
       { email: { $regex: new RegExp(search, "i") } },
+      { city: { $regex: new RegExp(search, "i") } },
     ];
     if (!Number.isNaN(Number(search))) {
       userMatch.$or.push({ mobile: Number(search) });
     }
+  }
+
+  const dayStart = (dateStr) => {
+    const d = new Date(dateStr);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const dayEnd = (dateStr) => {
+    const d = new Date(dateStr);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  };
+
+  if (registeredDate) {
+    userMatch.createdAt = {
+      $gte: dayStart(registeredDate),
+      $lte: dayEnd(registeredDate),
+    };
+  } else if (createdFrom || createdTo) {
+    userMatch.createdAt = {};
+    if (createdFrom) userMatch.createdAt.$gte = dayStart(createdFrom);
+    if (createdTo) userMatch.createdAt.$lte = dayEnd(createdTo);
   }
 
   const pipeline = [{ $match: userMatch }];
@@ -252,8 +279,16 @@ exports.getAllUsers = async (query) => {
       mobile: 1,
       image: 1,
       address: 1,
+      dob: 1,
+      age: 1,
+      city: 1,
       isOnline: 1,
       isActive: 1,
+      isEmailVerified: 1,
+      isMobileVerified: 1,
+      isSignUpCompleted: 1,
+      createdAsGuest: 1,
+      signupChatTrialStartedAt: 1,
       isOnBoardingCompleted: 1,
       role: 1,
       createdAt: 1,
@@ -276,12 +311,24 @@ exports.getAllUsers = async (query) => {
     },
   });
 
+  const allowedSortFields = new Set([
+    "name",
+    "email",
+    "mobile",
+    "age",
+    "city",
+    "createdAt",
+    "updatedAt",
+    "isActive",
+    "isMobileVerified",
+  ]);
+  const sortField = allowedSortFields.has(sortBy) ? sortBy : "createdAt";
   const sortStage = {};
   if (sortBy === "isAvailable") {
     sortStage["mate.isAvailable"] = -1;
-    sortStage["createdAt"] = sortOrder === "asc" ? 1 : -1;
+    sortStage.createdAt = sortOrder === "asc" ? 1 : -1;
   } else {
-    sortStage[sortBy] = sortOrder === "asc" ? 1 : -1;
+    sortStage[sortField] = sortOrder === "asc" ? 1 : -1;
   }
   pipeline.push({ $sort: sortStage });
 

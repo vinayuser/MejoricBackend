@@ -90,6 +90,24 @@ exports.validateGetAllUsersQuery = (data) => {
       .try(Joi.boolean(), Joi.string().valid("true", "false"))
       .optional(),
     search: Joi.string().allow("").optional(),
+    registeredDate: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .messages({
+        "string.pattern.base": "registeredDate must be YYYY-MM-DD",
+      }),
+    createdFrom: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .messages({
+        "string.pattern.base": "createdFrom must be YYYY-MM-DD",
+      }),
+    createdTo: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .messages({
+        "string.pattern.base": "createdTo must be YYYY-MM-DD",
+      }),
     language: Joi.string().allow("").optional(),
     languages: Joi.alternatives()
       .try(Joi.string(), Joi.array().items(Joi.string()))

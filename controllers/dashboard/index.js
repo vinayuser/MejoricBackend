@@ -4,6 +4,7 @@ const Product = require("../../models/Product");
 const SubCategory = require("../../models/SubCategory");
 const Subscription = require("../../models/Subscription");
 const Banner = require("../../models/Banner");
+const { ROLES } = require("../../constants");
 
 // @desc    Get dashboard data
 // @route   GET /dashboard
@@ -41,6 +42,26 @@ const getDashboard = async (req, res) => {
       isDeleted: false,
       createdAt: { $gte: sevenDaysAgo },
     });
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+
+    const todayRegisteredUsersMatch = {
+      isDeleted: false,
+      role: ROLES.USER,
+      createdAt: { $gte: startOfToday, $lte: endOfToday },
+    };
+
+    const [todayRegisteredUsersCount, todayRegisteredUsers] = await Promise.all([
+      User.countDocuments(todayRegisteredUsersMatch),
+      User.find(todayRegisteredUsersMatch)
+        .select("name email mobile age city createdAt isMobileVerified isActive")
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean(),
+    ]);
 
     // Get users by month (last 6 months)
     const sixMonthsAgo = new Date();
@@ -151,6 +172,8 @@ const getDashboard = async (req, res) => {
         totalSubscriptions,
         totalBanners,
         recentUsers,
+        todayRegisteredUsersCount,
+        todayRegisteredUsers,
 
         // Chart data
         statusCounts,

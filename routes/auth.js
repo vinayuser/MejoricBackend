@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const { verifyJwtToken } = require("../middlewares");
 
 const {
   register,
@@ -13,6 +14,7 @@ const {
   forgotPassword,
   resetPassword,
   checkGuestLimit,
+  checkSignupTrial,
 } = require("../controllers/auth");
 
 router.post("/register", register);
@@ -26,5 +28,6 @@ router.put("/verify-otp-mobile", verifyOtpWithMobile);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
 router.get("/check-guest-limit", checkGuestLimit);
+router.get("/check-signup-trial", verifyJwtToken, checkSignupTrial);
 
 module.exports = router;

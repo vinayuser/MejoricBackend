@@ -61,6 +61,11 @@ const io = new Server(server, {
 
 const { activeSessions, disconnectTimeouts } = require("./helpers/chat.helper");
 const { processChatBilling } = require("./helpers/chatBilling.helper");
+const {
+  getSignupTrialRemainingSeconds,
+  hasPaidWalletRecharge,
+  ensureSignupTrialStarted,
+} = require("./helpers/signupTrial.helper");
 
 io.on("connection", (socket) => {
   console.log("🔌 New socket connection:", socket.id);
@@ -106,10 +111,14 @@ io.on("connection", (socket) => {
           const ids = conversationId.split("_");
           // Find the participant who is a 'user' or 'guest' (the potential payer)
           const participants = await User.find({ _id: { $in: ids } });
-          const payer = participants.find((u) => u.role === ROLES.USER || u.role === ROLES.GUEST);
+          let payer = participants.find((u) => u.role === ROLES.USER || u.role === ROLES.GUEST);
           const mateUser = participants.find(
             (u) => u.role === ROLES.MATE || u.role === ROLES.MENTOR,
           );
+
+          if (payer?.role === ROLES.USER) {
+            payer = await ensureSignupTrialStarted(payer);
+          }
 
           if (payer && mateUser) {
             let trialDuration = parseInt(process.env.TRIAL_CHAT_DURATION) || 180;
@@ -117,32 +126,46 @@ io.on("connection", (socket) => {
             if (payer.role === ROLES.USER) {
               const mate = await Mate.findOne({ userId: mateUser._id });
               const wallet = await Wallet.findOne({ userId: payer._id });
+              const paidRecharge = await hasPaidWalletRecharge(payer._id);
 
               if (mate && wallet) {
                 const balance = wallet.balances?.INR || 0;
                 const price = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
 
-                // Trial Logic: Only for first-time users (no previous ended sessions)
-                const previousSessions = await ChatSession.countDocuments({
-                  $or: [{ senderId: payer._id }, { recipientId: payer._id }],
-                  status: "ENDED",
-                });
-                if (previousSessions > 0) {
-                  trialDuration = 0;
+                if (!paidRecharge) {
+                  // New signup: chat only for remaining wall-clock trial (default 10 min)
+                  const signupRemaining = getSignupTrialRemainingSeconds(payer);
+                  trialDuration = signupRemaining;
+                  duration = signupRemaining;
+                  activePrice = 0;
+                  sessionTrialDuration = signupRemaining;
+                  sessionPayerId = payer._id;
+                  sessionPayerBalance = balance;
+
+                  console.log(
+                    `[Timer] Signup trial payer: ${payer.name}, remaining=${signupRemaining}s`,
+                  );
+                } else {
+                  // Paid users: optional first-session trial + wallet balance
+                  const previousSessions = await ChatSession.countDocuments({
+                    $or: [{ senderId: payer._id }, { recipientId: payer._id }],
+                    status: "ENDED",
+                  });
+                  if (previousSessions > 0) {
+                    trialDuration = 0;
+                  }
+
+                  const balanceDuration = Math.floor(balance / price) * 60;
+                  duration = trialDuration + balanceDuration;
+
+                  console.log(
+                    `[Timer] Identified User Payer: ${payer.name}, Mate: ${mateUser.name}. balance=${balance}, price=${price}, trial=${trialDuration}s, total=${duration}s`,
+                  );
+                  activePrice = price;
+                  sessionTrialDuration = trialDuration;
+                  sessionPayerId = payer._id;
+                  sessionPayerBalance = balance;
                 }
-
-                // Calculate duration: Everyone gets trialDuration, plus whatever their balance allows.
-                const balanceDuration = Math.floor(balance / price) * 60;
-                duration = trialDuration + balanceDuration;
-
-                console.log(
-                  `[Timer] Identified User Payer: ${payer.name}, Mate: ${mateUser.name}. balance=${balance}, price=${price}, trial=${trialDuration}s, total=${duration}s`,
-                );
-                // Store price and trial info for later deduction
-                activePrice = price;
-                sessionTrialDuration = trialDuration;
-                sessionPayerId = payer._id;
-                sessionPayerBalance = balance;
               }
             } else if (payer.role === ROLES.GUEST) {
               // Guest user trial logic: cumulative TRIAL_CHAT_DURATION per guest / IP origin
@@ -218,8 +241,11 @@ io.on("connection", (socket) => {
           session.timer = setInterval(() => {
             session.timeLeft -= 1;
 
-            // Low balance warning logic (2 minutes = 120s, 1 minute = 60s)
-            if (session.timeLeft === 120 || session.timeLeft === 60) {
+            // Low balance warning — skip free signup / guest trial sessions
+            if (
+              session.pricePerMin > 0 &&
+              (session.timeLeft === 120 || session.timeLeft === 60)
+            ) {
               console.log(
                 `⚠️ Low balance warning for ${conversationId}: ${session.timeLeft}s left`,
               );
@@ -253,8 +279,12 @@ io.on("connection", (socket) => {
               );
 
               activeSessions.delete(conversationId);
+              const endedMessage =
+                session.pricePerMin === 0 && session.trialDuration > 0
+                  ? "Your free 10-minute signup chat period has ended. Please recharge to continue chatting."
+                  : "Session ended. Please check your balance.";
               io.to(conversationId).emit("session_ended", {
-                message: "Session ended. Please check your balance.",
+                message: endedMessage,
               });
             }
           }, 1000);

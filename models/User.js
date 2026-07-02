@@ -68,6 +68,10 @@ const userSchema = new mongoose.Schema(
     isDeleted: { type: Boolean, default: false, select: false },
     ipAddress: { type: String },
     createdAsGuest: { type: Boolean, default: false },
+    age: { type: Number },
+    city: { type: String, trim: true },
+    /** When the 10-min post-signup free chat window starts (guest→user keeps old createdAt). */
+    signupChatTrialStartedAt: { type: Date },
   },
   { timestamps: true, versionKey: false },
 );

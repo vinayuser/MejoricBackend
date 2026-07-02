@@ -9,6 +9,7 @@ const { resetPassword } = require("./resetPassword");
 const { logout } = require("./logout");
 const { guestLogin } = require("./guestLogin");
 const { checkGuestLimit } = require("./checkGuestLimit");
+const { checkSignupTrial } = require("./checkSignupTrial");
 
 module.exports = {
   register,
@@ -22,4 +23,5 @@ module.exports = {
   forgotPassword,
   resetPassword,
   checkGuestLimit,
+  checkSignupTrial,
 };
