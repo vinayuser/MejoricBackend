@@ -7,7 +7,7 @@ const { isAdult } = require("../../helpers/users");
 const { ROLES } = require("../../constants");
 // const { validateObjectId } = require("../../utils");
 
-exports.updateUserById = async (userId, payload, image) => {
+exports.updateUserById = async (userId, payload, image, options = {}) => {
   const user = await User.findById(userId);
   if (!user || user?.isDeleted) throwError(404, "User not found");
   const isMate = user.role === ROLES.MATE;
@@ -165,6 +165,15 @@ exports.updateUserById = async (userId, payload, image) => {
   await user.save();
 
   if (isMate) {
+    let previousAvailable;
+    if (mateUpdate.isAvailable !== undefined) {
+      const mateBeforeUpdate = await Mate.findOne({
+        userId: user._id,
+        isDeleted: false,
+      });
+      previousAvailable = Boolean(mateBeforeUpdate?.isAvailable);
+    }
+
     const baseSync = {
       name: user.name,
       email: user.email,
@@ -223,6 +232,22 @@ exports.updateUserById = async (userId, payload, image) => {
         }
       } else {
         console.warn("⚠️ Firebase not initialized, skipping mate status broadcast.");
+      }
+
+      if (previousAvailable !== mateUpdate.isAvailable) {
+        try {
+          const {
+            recordMateAvailabilityChange,
+          } = require("../mateAvailability/tracking");
+          await recordMateAvailabilityChange({
+            mateUser: user,
+            previousAvailable,
+            newAvailable: mateUpdate.isAvailable,
+            source: options.availabilitySource || "mate_app",
+          });
+        } catch (trackErr) {
+          console.error("❌ Mate availability tracking failed:", trackErr);
+        }
       }
     }
   }

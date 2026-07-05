@@ -35,10 +35,20 @@ exports.updateUser = asyncWrapper(async (req, res) => {
     }
   });
 
+  const availabilitySource =
+    req.body.availabilitySource ||
+    (req.role === ROLES.ADMIN ? "admin_panel" : "mate_app");
+  if (req.body.availabilitySource !== undefined) {
+    delete req.body.availabilitySource;
+  }
+
   const { error } = validateUpdateUser(req.body);
   if (error) throwError(422, error.details.map((d) => d.message).join(", "));
   const image = req.files?.image;
-  const updatedUser = await updateUserById(userId, req.body, image);
+
+  const updatedUser = await updateUserById(userId, req.body, image, {
+    availabilitySource,
+  });
   return sendSuccess(
     res,
     200,

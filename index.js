@@ -35,6 +35,11 @@ const Mate = require("./models/Mate");
 const ChatSession = require("./models/ChatSession");
 // const backfillChatSessions = require("./backfill");
 const { ROLES } = require("./constants");
+const { setIO } = require("./helpers/socket");
+const {
+  registerMateSocket,
+  unregisterMateSocket,
+} = require("./helpers/matePresence");
 const { sendPushNotification } = require("./helpers/notification.helper");
 
 const allowedOrigins = [
@@ -58,6 +63,7 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+setIO(io);
 
 const { activeSessions, disconnectTimeouts } = require("./helpers/chat.helper");
 const { processChatBilling } = require("./helpers/chatBilling.helper");
@@ -73,8 +79,15 @@ io.on("connection", (socket) => {
   socket.on("register_user", (userId) => {
     if (userId) {
       socket.join(`user_${userId}`);
+      socket.registeredUserId = String(userId);
+      registerMateSocket(socket.registeredUserId, socket.id);
       console.log(`📡 User ${userId} registered for private notifications`);
     }
+  });
+
+  socket.on("join_admin_mate_tracking", () => {
+    socket.join("admin_mate_tracking");
+    console.log(`📊 Admin socket ${socket.id} joined mate tracking room`);
   });
 
   socket.on("join_chat", async (conversationId, userId) => {
@@ -416,6 +429,11 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     console.log("🔌 Socket disconnected:", socket.id);
+
+    if (socket.registeredUserId) {
+      unregisterMateSocket(socket.registeredUserId, socket.id);
+    }
+
     const { conversationId, userId } = socket;
 
     if (conversationId) {

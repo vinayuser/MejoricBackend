@@ -56,14 +56,17 @@ exports.validateUpdateUser = (data) => {
     isOnline: Joi.boolean().messages({
       "boolean.base": "isOnline must be a boolean",
     }),
+    availabilitySource: Joi.string()
+      .valid("mate_app", "admin_panel", "logout", "system", "tab_close")
+      .optional(),
     mentorType: Joi.string()
       .valid("emotional", "professional")
       .optional()
       .messages({
         "any.only": "mentorType must be emotional or professional",
       }),
-  });
-  return schema.validate(data, { abortEarly: false });
+  }).unknown(true);
+  return schema.validate(data, { abortEarly: false, stripUnknown: true });
 };
 
 exports.validateGetAllUsersQuery = (data) => {

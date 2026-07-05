@@ -1,11 +1,15 @@
 const mongoose = require("mongoose");
 const dns = require("dns");
 const dotenv = require("dotenv");
+const {
+  ensureMateActivityLogCollection,
+} = require("../services/mateAvailability/activityLog");
 dotenv.config();
 
 exports.mongoDb = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URL);
+    await ensureMateActivityLogCollection();
     console.log("✅ Mejoric MongoDb connection established");
   } catch (error) {
     if (error.code === "ECONNREFUSED" && error.syscall === "querySrv") {
@@ -13,6 +17,7 @@ exports.mongoDb = async () => {
       dns.setServers(["8.8.8.8", "1.1.1.1"]);
       try {
         await mongoose.connect(process.env.MONGO_URL);
+        await ensureMateActivityLogCollection();
         console.log("✅ Mejoric MongoDb connection established (fallback)");
       } catch (fallbackError) {
         console.log("❌ Fallback also failed:", fallbackError?.message);

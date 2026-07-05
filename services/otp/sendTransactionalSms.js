@@ -6,12 +6,20 @@ const { formatMobileNumber } = require("./formatMobileNumber");
 const TWO_FACTOR_BASE_URL = "https://2factor.in/API/V1";
 
 /**
- * Send a custom transactional SMS via 2factor ADD_SMS API.
- * Requires TWO_FACTOR_API_KEY. Optional TWO_FACTOR_SENDER_ID for DLT sender header.
+ * Send a custom transactional SMS via 2factor Transactional SMS API.
+ * Requires TWO_FACTOR_API_KEY and TWO_FACTOR_SENDER_ID (DLT-approved sender ID).
  */
 exports.sendTransactionalSms = async (mobile, message) => {
   const apiKey = process.env.TWO_FACTOR_API_KEY;
   if (!apiKey) throwError(500, "TWO_FACTOR_API_KEY is not configured");
+
+  const senderId = process.env.TWO_FACTOR_SENDER_ID;
+  if (!senderId) {
+    throwError(
+      500,
+      "TWO_FACTOR_SENDER_ID is not configured (required for transactional SMS)",
+    );
+  }
 
   const text = String(message || "").trim();
   if (!text) throwError(422, "SMS message is required");
@@ -20,18 +28,28 @@ exports.sendTransactionalSms = async (mobile, message) => {
   const formattedMobile = formatMobileNumber(mobile);
   if (!formattedMobile) throwError(422, "Invalid mobile number");
 
-  const senderId = process.env.TWO_FACTOR_SENDER_ID;
-  const encodedMessage = encodeURIComponent(text);
-  const url = senderId
-    ? `${TWO_FACTOR_BASE_URL}/${apiKey}/ADD_SMS/${formattedMobile}/${senderId}/${encodedMessage}`
-    : `${TWO_FACTOR_BASE_URL}/${apiKey}/ADD_SMS/${formattedMobile}/${encodedMessage}`;
+  const url = `${TWO_FACTOR_BASE_URL}/${apiKey}/ADDON_SERVICES/SEND/TSMS`;
 
   try {
-    const response = await axios.get(url, { maxBodyLength: Infinity });
+    const response = await axios.post(
+      url,
+      {
+        From: senderId,
+        To: formattedMobile,
+        Msg: text,
+      },
+      {
+        headers: { "Content-Type": "application/json" },
+        maxBodyLength: Infinity,
+        timeout: 30000,
+      },
+    );
+
     const data = response?.data;
     if (data?.Status !== "Success") {
       throwError(502, data?.Details || "Failed to send SMS");
     }
+
     return {
       mobile: formattedMobile,
       sessionId: data?.Details || null,
@@ -39,13 +57,21 @@ exports.sendTransactionalSms = async (mobile, message) => {
     };
   } catch (error) {
     if (error.statusCode) throw error;
+
+    const apiDetails =
+      error?.response?.data?.Details ||
+      (typeof error?.response?.data === "string"
+        ? error.response.data.slice(0, 200)
+        : null);
+
     console.error(
       "Error sending transactional SMS:",
-      error?.response?.data || error.message,
+      apiDetails || error?.response?.data || error.message,
     );
+
     throwError(
-      500,
-      error?.response?.data?.Details || error.message || "Failed to send SMS",
+      502,
+      apiDetails || error.message || "Failed to send SMS",
     );
   }
 };
