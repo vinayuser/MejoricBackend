@@ -308,6 +308,13 @@ exports.getAllUsers = async (query) => {
       "mentor.experience": 1,
       "mentor.bio": 1,
       "mentor.mentorType": 1,
+      "mentor.domainIds": 1,
+      "mentor.domains": 1,
+      "mentor.domainId": 1,
+      "mentor.domain": 1,
+      "mentor.audioCallPrice": 1,
+      "mentor.videoCallPrice": 1,
+      "mentor.video60CallPrice": 1,
     },
   });
 

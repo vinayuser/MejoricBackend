@@ -5,6 +5,8 @@ const { throwError } = require("../../utils");
 const { uploadImage, deleteImage } = require("../uploads");
 const { isAdult } = require("../../helpers/users");
 const { ROLES } = require("../../constants");
+const { resolveMentorDomains, normalizeDomainIds } = require("../../constants/mentorDomains");
+const { resolveMentorPrices } = require("../../helpers/mentorPricing");
 // const { validateObjectId } = require("../../utils");
 
 exports.updateUserById = async (userId, payload, image, options = {}) => {
@@ -34,6 +36,12 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
       isAvailable,
       isOnline,
       mentorType,
+      domainIds,
+      domainId,
+      domain,
+      audioCallPrice,
+      videoCallPrice,
+      video60CallPrice,
     } = payload;
     if (
       typeof pricePerMin === "undefined" &&
@@ -154,6 +162,66 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
           throwError(422, "mentorType must be emotional or professional");
         }
         mentorUpdate.mentorType = normalizedMentorType;
+      }
+      const effectiveMentorType =
+        mentorUpdate.mentorType ||
+        (await Mentor.findOne({ userId: user._id, isDeleted: false }))?.mentorType;
+
+      const incomingDomainIds =
+        typeof domainIds !== "undefined"
+          ? normalizeDomainIds(domainIds || domainId)
+          : null;
+
+      if (incomingDomainIds !== null) {
+        if (!incomingDomainIds.length) {
+          throwError(422, "Select at least one category");
+        }
+        const resolvedDomains = resolveMentorDomains(
+          effectiveMentorType,
+          incomingDomainIds,
+        );
+        if (resolvedDomains.length !== incomingDomainIds.length) {
+          throwError(422, "Invalid category for selected mentor type");
+        }
+        const resolvedIds = resolvedDomains.map((d) => d.id);
+        const resolvedNames = resolvedDomains.map((d) => d.name);
+        mentorUpdate.domainIds = resolvedIds;
+        mentorUpdate.domains = resolvedNames;
+        mentorUpdate.domainId = resolvedIds[0];
+        mentorUpdate.domain = resolvedNames[0];
+        const currentSpecs = mentorUpdate.specifications;
+        if (typeof currentSpecs === "undefined") {
+          mentorUpdate.specifications = resolvedNames;
+        } else {
+          mentorUpdate.specifications = [...new Set([...resolvedNames, ...currentSpecs])];
+        }
+      }
+      if (
+        typeof audioCallPrice !== "undefined" ||
+        typeof videoCallPrice !== "undefined" ||
+        typeof video60CallPrice !== "undefined"
+      ) {
+        const existingMentorDoc = await Mentor.findOne({
+          userId: user._id,
+          isDeleted: false,
+        });
+        const resolved = resolveMentorPrices({
+          audioCallPrice:
+            typeof audioCallPrice !== "undefined"
+              ? audioCallPrice
+              : existingMentorDoc?.audioCallPrice,
+          videoCallPrice:
+            typeof videoCallPrice !== "undefined"
+              ? videoCallPrice
+              : existingMentorDoc?.videoCallPrice,
+          video60CallPrice:
+            typeof video60CallPrice !== "undefined"
+              ? video60CallPrice
+              : existingMentorDoc?.video60CallPrice,
+        });
+        mentorUpdate.audioCallPrice = resolved.audioCallPrice;
+        mentorUpdate.videoCallPrice = resolved.videoCallPrice;
+        mentorUpdate.video60CallPrice = resolved.video60CallPrice;
       }
     }
   }

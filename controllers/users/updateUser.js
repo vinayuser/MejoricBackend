@@ -16,7 +16,7 @@ exports.updateUser = asyncWrapper(async (req, res) => {
   }
 
   // Normalize array fields that might be sent as strings via FormData
-  ["specifications", "languages"].forEach((field) => {
+  ["specifications", "languages", "domainIds", "domains"].forEach((field) => {
     if (req.body && req.body[field]) {
       if (typeof req.body[field] === "string") {
         try {

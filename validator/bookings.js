@@ -9,6 +9,10 @@ exports.validateCreateBooking = (payload) => {
       .pattern(/^\d{4}-\d{2}-\d{2}$/)
       .required(),
     slotId: Joi.string().required(),
+    sessionFormat: Joi.string()
+      .valid("audio", "video", "video60")
+      .default("video"),
+    sessionPrice: Joi.number().positive().optional(),
     guestDetails: Joi.object({
       fullName: Joi.string().trim().min(2).required(),
       email: Joi.string().email().required(),
@@ -97,6 +101,16 @@ exports.validateUserBookingsQuery = (payload) => {
     tab: Joi.string().valid("upcoming", "past").default("upcoming"),
     page: Joi.number().integer().min(1).default(1),
     limit: Joi.number().integer().min(1).max(50).default(20),
+  });
+
+  return schema.validate(payload, { abortEarly: false });
+};
+
+exports.validateVerifyBookingPayment = (payload) => {
+  const schema = Joi.object({
+    razorpayOrderId: Joi.string().required(),
+    razorpayPaymentId: Joi.string().required(),
+    razorpaySignature: Joi.string().required(),
   });
 
   return schema.validate(payload, { abortEarly: false });

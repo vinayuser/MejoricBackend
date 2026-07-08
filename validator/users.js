@@ -65,6 +65,22 @@ exports.validateUpdateUser = (data) => {
       .messages({
         "any.only": "mentorType must be emotional or professional",
       }),
+    domainId: Joi.string().trim().optional(),
+    domain: Joi.string().trim().optional(),
+    domainIds: Joi.array().items(Joi.string().trim()).optional(),
+    domains: Joi.array().items(Joi.string().trim()).optional(),
+    audioCallPrice: Joi.number().positive().optional().messages({
+      "number.base": "audioCallPrice must be numeric",
+      "number.positive": "audioCallPrice must be > 0",
+    }),
+    videoCallPrice: Joi.number().positive().optional().messages({
+      "number.base": "videoCallPrice must be numeric",
+      "number.positive": "videoCallPrice must be > 0",
+    }),
+    video60CallPrice: Joi.number().positive().optional().messages({
+      "number.base": "video60CallPrice must be numeric",
+      "number.positive": "video60CallPrice must be > 0",
+    }),
   }).unknown(true);
   return schema.validate(data, { abortEarly: false, stripUnknown: true });
 };

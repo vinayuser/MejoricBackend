@@ -1,9 +1,15 @@
 const MentorBooking = require("../../models/MentorBooking");
 const MentorAvailability = require("../../models/MentorAvailability");
+const Mentor = require("../../models/Mentor");
 const User = require("../../models/User");
 const { ROLES } = require("../../constants");
 const { throwError } = require("../../utils");
 const { createZoomMeeting } = require("../../helpers/zoom");
+const {
+  isAgoraConfigured,
+  buildBookingChannelName,
+} = require("../../helpers/agora.helper");
+const mongoose = require("mongoose");
 const {
   buildAllSlotsForDate,
   slotIdToDate,
@@ -12,6 +18,11 @@ const {
 const {
   sendBookingConfirmationEmails,
 } = require("./emailNotifications");
+const {
+  getMentorSessionPrice,
+  getMentorSessionDuration,
+  isValidSessionFormat,
+} = require("../../helpers/mentorPricing");
 
 async function assertMentorUser(mentorId) {
   const mentor = await User.findById(mentorId);
@@ -21,17 +32,22 @@ async function assertMentorUser(mentorId) {
   return mentor;
 }
 
-exports.createBooking = async ({
-  mentorId,
-  scheduledAt,
-  slotLabel,
-  dateKey,
-  slotId,
-  guestDetails,
-  userId,
-}) => {
-  const mentor = await assertMentorUser(mentorId);
+async function resolveSessionPricing(mentorId, sessionFormat) {
+  const mentorProfile = await Mentor.findOne({ userId: mentorId, isDeleted: false });
+  if (!mentorProfile) {
+    throwError(404, "Mentor profile not found");
+  }
+  const normalizedFormat = isValidSessionFormat(sessionFormat)
+    ? sessionFormat
+    : "video";
+  return {
+    sessionFormat: normalizedFormat,
+    sessionPrice: getMentorSessionPrice(mentorProfile, normalizedFormat),
+    durationMinutes: getMentorSessionDuration(normalizedFormat),
+  };
+}
 
+async function assertSlotAvailable({ mentorId, dateKey, slotId, scheduledAt }) {
   const availability = await MentorAvailability.findOne({
     mentorId,
     dateKey,
@@ -58,14 +74,56 @@ exports.createBooking = async ({
     throwError(409, "This time slot is no longer available");
   }
 
-  const topic = `Mejoric session with ${guestDetails.fullName}`;
-  const zoomMeeting = await createZoomMeeting({
-    topic,
-    startTime,
-    durationMinutes: 30,
+  return startTime;
+}
+
+exports.createBooking = async ({
+  mentorId,
+  scheduledAt,
+  slotLabel,
+  dateKey,
+  slotId,
+  guestDetails,
+  userId,
+  sessionFormat = "video",
+  paymentStatus = "paid",
+  razorpayOrderId,
+  razorpayPaymentId,
+}) => {
+  const mentor = await assertMentorUser(mentorId);
+  const pricing = await resolveSessionPricing(mentorId, sessionFormat);
+  const startTime = await assertSlotAvailable({
+    mentorId,
+    dateKey,
+    slotId,
+    scheduledAt,
   });
 
+  const topic = `Mejoric session with ${guestDetails.fullName}`;
+  const bookingId = new mongoose.Types.ObjectId();
+  const agoraChannelName = buildBookingChannelName(bookingId);
+  const useAgora = isAgoraConfigured();
+
+  let zoomMeeting;
+  if (useAgora) {
+    zoomMeeting = {
+      provider: "agora",
+      meetingId: agoraChannelName,
+      meetingUuid: agoraChannelName,
+      joinUrl: "",
+      startUrl: "",
+      password: "",
+    };
+  } else {
+    zoomMeeting = await createZoomMeeting({
+      topic,
+      startTime,
+      durationMinutes: pricing.durationMinutes,
+    });
+  }
+
   const booking = await MentorBooking.create({
+    _id: bookingId,
     mentorId,
     userId: userId || undefined,
     guestDetails,
@@ -73,8 +131,14 @@ exports.createBooking = async ({
     slotLabel,
     dateKey,
     slotId,
-    durationMinutes: 30,
+    sessionFormat: pricing.sessionFormat,
+    sessionPrice: pricing.sessionPrice,
+    durationMinutes: pricing.durationMinutes,
+    paymentStatus,
+    razorpayOrderId,
+    razorpayPaymentId,
     status: "scheduled",
+    agoraChannelName,
     zoomProvider: zoomMeeting.provider,
     zoomMeetingId: zoomMeeting.meetingId,
     zoomMeetingUuid: zoomMeeting.meetingUuid,
@@ -94,6 +158,8 @@ exports.createBooking = async ({
   return formatBookingResponse(booking, mentor);
 };
 
+exports.formatBookingResponse = formatBookingResponse;
+
 exports.getBookedSlotIds = async (mentorId, dateKey) => {
   const bookings = await MentorBooking.find({
     mentorId,
@@ -105,7 +171,37 @@ exports.getBookedSlotIds = async (mentorId, dateKey) => {
   return bookings.map((booking) => booking.slotId);
 };
 
-exports.getPublicAvailableSlots = async (mentorId, dateKey) => {
+async function getUserBookedSlotsForDate(userId, mentorId, dateKey) {
+  if (!userId) return [];
+
+  const user = await User.findById(userId).select("email");
+  const identityOr = [{ userId }];
+  if (user?.email) {
+    identityOr.push({ "guestDetails.email": user.email.toLowerCase() });
+  }
+
+  const now = new Date();
+  const bookings = await MentorBooking.find({
+    mentorId,
+    dateKey,
+    isDeleted: false,
+    status: { $in: ["scheduled", "in_progress"] },
+    scheduledAt: { $gte: now },
+    $or: identityOr,
+  }).select("slotId slotLabel scheduledAt _id sessionFormat");
+
+  return bookings.map((booking) => ({
+    id: booking.slotId,
+    dateKey,
+    label: booking.slotLabel,
+    startsAt: booking.scheduledAt.toISOString(),
+    bookedByMe: true,
+    bookingId: booking._id,
+    sessionFormat: booking.sessionFormat,
+  }));
+}
+
+exports.getPublicAvailableSlots = async (mentorId, dateKey, userId = null) => {
   const mentor = await User.findById(mentorId);
   if (!mentor || mentor.role !== ROLES.MENTOR) {
     return [];
@@ -124,13 +220,17 @@ exports.getPublicAvailableSlots = async (mentorId, dateKey) => {
   const bookedSlotIds = await exports.getBookedSlotIds(mentorId, dateKey);
   const now = new Date();
 
-  return buildAllSlotsForDate(dateKey)
+  const openSlots = buildAllSlotsForDate(dateKey)
     .filter((slot) => availability.slotIds.includes(slot.id))
     .filter((slot) => !bookedSlotIds.includes(slot.id))
     .filter((slot) => new Date(slot.startsAt) > now);
+
+  const myBookedSlots = await getUserBookedSlotsForDate(userId, mentorId, dateKey);
+
+  return [...myBookedSlots, ...openSlots];
 };
 
-exports.getPublicAvailableDates = async (mentorId, year, month) => {
+exports.getPublicAvailableDates = async (mentorId, year, month, userId = null) => {
   const mentor = await User.findById(mentorId);
   if (!mentor || mentor.role !== ROLES.MENTOR) {
     return [];
@@ -150,9 +250,32 @@ exports.getPublicAvailableDates = async (mentorId, year, month) => {
 
   for (const record of records) {
     if (record.dateKey < todayKey) continue;
-    const slots = await exports.getPublicAvailableSlots(mentorId, record.dateKey);
+    const slots = await exports.getPublicAvailableSlots(mentorId, record.dateKey, userId);
     if (slots.length > 0) {
       dates.push(record.dateKey);
+    }
+  }
+
+  if (userId) {
+    const user = await User.findById(userId).select("email");
+    const identityOr = [{ userId }];
+    if (user?.email) {
+      identityOr.push({ "guestDetails.email": user.email.toLowerCase() });
+    }
+
+    const myDates = await MentorBooking.find({
+      mentorId,
+      isDeleted: false,
+      status: { $in: ["scheduled", "in_progress"] },
+      scheduledAt: { $gte: new Date() },
+      dateKey: { $regex: `^${monthPrefix}` },
+      $or: identityOr,
+    }).distinct("dateKey");
+
+    for (const dateKey of myDates) {
+      if (dateKey >= todayKey && !dates.includes(dateKey)) {
+        dates.push(dateKey);
+      }
     }
   }
 
@@ -439,7 +562,12 @@ function formatBookingResponse(booking, mentor) {
     scheduledAt: booking.scheduledAt,
     userEmail: booking.guestDetails.email,
     userName: booking.guestDetails.fullName,
+    sessionFormat: booking.sessionFormat,
+    sessionPrice: booking.sessionPrice,
+    durationMinutes: booking.durationMinutes,
     status: booking.status,
+    agoraChannelName: booking.agoraChannelName,
+    zoomProvider: booking.zoomProvider,
     zoomMeetingId: booking.zoomMeetingId,
     zoomPassword: booking.zoomPassword,
     zoomJoinUrl: booking.zoomJoinUrl,
@@ -455,8 +583,13 @@ function formatUserBooking(booking) {
     status: booking.status,
     scheduledAt: booking.scheduledAt,
     slotLabel: booking.slotLabel,
+    slotId: booking.slotId,
     dateKey: booking.dateKey,
     durationMinutes: booking.durationMinutes,
+    sessionFormat: booking.sessionFormat,
+    sessionPrice: booking.sessionPrice,
+    agoraChannelName: booking.agoraChannelName,
+    zoomProvider: booking.zoomProvider,
     mentor: mentor
       ? {
           _id: mentor._id,
@@ -480,9 +613,14 @@ function formatMentorAppointment(booking) {
     slotLabel: booking.slotLabel,
     dateKey: booking.dateKey,
     guestDetails: booking.guestDetails,
+    sessionFormat: booking.sessionFormat,
+    sessionPrice: booking.sessionPrice,
+    durationMinutes: booking.durationMinutes,
     actualDurationSeconds: booking.actualDurationSeconds,
     actualStartTime: booking.actualStartTime,
     actualEndTime: booking.actualEndTime,
+    agoraChannelName: booking.agoraChannelName,
+    zoomProvider: booking.zoomProvider,
     zoomMeetingId: booking.zoomMeetingId,
     zoomStartUrl: booking.zoomStartUrl,
     zoomPassword: booking.zoomPassword,

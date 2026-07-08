@@ -9,6 +9,8 @@ const { getOrCreateWallet } = require("../../services/wallet");
 // const { sendLoginOtpMail, sendSignupAgreementMail } = require("../../helpers/nodeMailer");
 const { sendSignupAgreementMail } = require("../../helpers/nodeMailer");
 const { sendOtpToMobile } = require("../../services/otp");
+const { resolveMentorDomains, normalizeDomainIds } = require("../../constants/mentorDomains");
+const { resolveMentorPrices } = require("../../helpers/mentorPricing");
 
 exports.register = asyncWrapper(async (req, res) => {
   let {
@@ -30,10 +32,17 @@ exports.register = asyncWrapper(async (req, res) => {
     specifications,
     languages,
     mentorType,
+    domainIds,
+    domainId,
+    domain,
+    audioCallPrice,
+    videoCallPrice,
+    video60CallPrice,
     guestId,
     age,
     city,
   } = req.body;
+  let domains;
   const image = req.files?.image;
   if (!mobile && !email) {
     throwError(422, "Email or Mobile number any one of this is required");
@@ -116,6 +125,23 @@ exports.register = asyncWrapper(async (req, res) => {
     }
     if (experience && Number(experience) < 0) {
       throwError(422, "experience must be >= 0");
+    }
+    const normalizedDomainIds = normalizeDomainIds(domainIds || domainId);
+    if (!normalizedDomainIds.length) {
+      throwError(422, "Select at least one category");
+    }
+    const resolvedDomains = resolveMentorDomains(normalizedMentorType, normalizedDomainIds);
+    if (resolvedDomains.length !== normalizedDomainIds.length) {
+      throwError(422, "Invalid category for selected mentor type");
+    }
+    domainIds = resolvedDomains.map((d) => d.id);
+    domains = resolvedDomains.map((d) => d.name);
+    domainId = domainIds[0];
+    domain = domains[0];
+    if (!specifications.length) {
+      specifications = domains;
+    } else {
+      specifications = [...new Set([...domains, ...specifications])];
     }
     mentorType = normalizedMentorType;
   }
@@ -260,6 +286,11 @@ exports.register = asyncWrapper(async (req, res) => {
     responseMessage = "Mate registered successfully";
   }
   if (isMentor) {
+    const mentorPrices = resolveMentorPrices({
+      audioCallPrice,
+      videoCallPrice,
+      video60CallPrice,
+    });
     await Mentor.create({
       userId: user._id,
       name: user.name,
@@ -270,6 +301,13 @@ exports.register = asyncWrapper(async (req, res) => {
       specifications,
       languages,
       mentorType,
+      domainIds,
+      domains,
+      domainId,
+      domain,
+      audioCallPrice: mentorPrices.audioCallPrice,
+      videoCallPrice: mentorPrices.videoCallPrice,
+      video60CallPrice: mentorPrices.video60CallPrice,
     });
     responseMessage = "Mentor registered successfully";
   }
