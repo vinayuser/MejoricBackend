@@ -68,10 +68,11 @@ setIO(io);
 const { activeSessions, disconnectTimeouts } = require("./helpers/chat.helper");
 const { processChatBilling } = require("./helpers/chatBilling.helper");
 const {
-  getSignupTrialRemainingSeconds,
-  hasPaidWalletRecharge,
-  ensureSignupTrialStarted,
-} = require("./helpers/signupTrial.helper");
+  getChatSecondsForBalance,
+  getChatChargeForSeconds,
+  getBillableMinutes,
+  getTimeLeftAfterRecharge,
+} = require("./helpers/chatPricing.helper");
 
 io.on("connection", (socket) => {
   console.log("🔌 New socket connection:", socket.id);
@@ -124,65 +125,39 @@ io.on("connection", (socket) => {
           const ids = conversationId.split("_");
           // Find the participant who is a 'user' or 'guest' (the potential payer)
           const participants = await User.find({ _id: { $in: ids } });
-          let payer = participants.find((u) => u.role === ROLES.USER || u.role === ROLES.GUEST);
+          const payer = participants.find((u) => u.role === ROLES.USER || u.role === ROLES.GUEST);
           const mateUser = participants.find(
             (u) => u.role === ROLES.MATE || u.role === ROLES.MENTOR,
           );
 
-          if (payer?.role === ROLES.USER) {
-            payer = await ensureSignupTrialStarted(payer);
-          }
-
           if (payer && mateUser) {
-            let trialDuration = parseInt(process.env.TRIAL_CHAT_DURATION) || 180;
+            const price = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
 
             if (payer.role === ROLES.USER) {
               const mate = await Mate.findOne({ userId: mateUser._id });
-              const wallet = await Wallet.findOne({ userId: payer._id });
-              const paidRecharge = await hasPaidWalletRecharge(payer._id);
+              const wallet = await Wallet.findOne({
+                userId: payer._id,
+                isDeleted: false,
+              });
 
               if (mate && wallet) {
                 const balance = wallet.balances?.INR || 0;
-                const price = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
+                const balanceDuration = getChatSecondsForBalance(balance, price);
 
-                if (!paidRecharge) {
-                  // New signup: chat only for remaining wall-clock trial (default 10 min)
-                  const signupRemaining = getSignupTrialRemainingSeconds(payer);
-                  trialDuration = signupRemaining;
-                  duration = signupRemaining;
-                  activePrice = 0;
-                  sessionTrialDuration = signupRemaining;
-                  sessionPayerId = payer._id;
-                  sessionPayerBalance = balance;
+                duration = balanceDuration;
+                activePrice = price;
+                sessionTrialDuration = 0;
+                sessionPayerId = payer._id;
+                sessionPayerBalance = balance;
 
-                  console.log(
-                    `[Timer] Signup trial payer: ${payer.name}, remaining=${signupRemaining}s`,
-                  );
-                } else {
-                  // Paid users: optional first-session trial + wallet balance
-                  const previousSessions = await ChatSession.countDocuments({
-                    $or: [{ senderId: payer._id }, { recipientId: payer._id }],
-                    status: "ENDED",
-                  });
-                  if (previousSessions > 0) {
-                    trialDuration = 0;
-                  }
-
-                  const balanceDuration = Math.floor(balance / price) * 60;
-                  duration = trialDuration + balanceDuration;
-
-                  console.log(
-                    `[Timer] Identified User Payer: ${payer.name}, Mate: ${mateUser.name}. balance=${balance}, price=${price}, trial=${trialDuration}s, total=${duration}s`,
-                  );
-                  activePrice = price;
-                  sessionTrialDuration = trialDuration;
-                  sessionPayerId = payer._id;
-                  sessionPayerBalance = balance;
-                }
+                console.log(
+                  `[Timer] Wallet payer: ${payer.name}, balance=${balance}, price=${price}/min, duration=${duration}s`,
+                );
               }
             } else if (payer.role === ROLES.GUEST) {
-              // Guest user trial logic: cumulative TRIAL_CHAT_DURATION per guest / IP origin
+              let trialDuration = parseInt(process.env.TRIAL_CHAT_DURATION) || 180;
               const clientIp = payer.ipAddress;
+              // Guest user trial logic: cumulative TRIAL_CHAT_DURATION per guest / IP origin
               const guestUsersFromIp = await User.find({
                 $or: [
                   { _id: payer._id },
@@ -227,7 +202,7 @@ io.on("connection", (socket) => {
           timeLeft: duration,
           started: false,
           pricePerMin: activePrice || 0,
-          trialDuration: typeof sessionTrialDuration !== "undefined" ? sessionTrialDuration : (parseInt(process.env.TRIAL_CHAT_DURATION) || 600),
+          trialDuration: typeof sessionTrialDuration !== "undefined" ? sessionTrialDuration : 0,
           payerId: sessionPayerId || null,
           initialBalance: typeof sessionPayerBalance !== "undefined" ? sessionPayerBalance : 0,
         };
@@ -237,7 +212,8 @@ io.on("connection", (socket) => {
         socket.emit("timer_sync", {
           timeLeft: duration,
           waiting: true,
-          isTrial: session.trialDuration > 0,
+          started: false,
+          isTrial: false,
           elapsedSeconds: 0,
           balance: session.initialBalance,
         });
@@ -271,16 +247,24 @@ io.on("connection", (socket) => {
             const elapsedSeconds = session.actualStartTime
               ? Math.floor((new Date() - session.actualStartTime) / 1000)
               : 0;
-            const billableSeconds = Math.max(0, elapsedSeconds - (session.trialDuration || 0));
-            const billableMinutes = Math.ceil(billableSeconds / 60);
-            const currentBalance = session.initialBalance - (billableMinutes * session.pricePerMin);
+            const billableSeconds = elapsedSeconds;
+            const billableMinutes = getBillableMinutes(billableSeconds);
+            const currentBalance =
+              session.pricePerMin > 0
+                ? Math.max(
+                    0,
+                    session.initialBalance -
+                      billableMinutes * session.pricePerMin,
+                  )
+                : session.initialBalance;
 
             io.to(conversationId).emit("timer_sync", {
               timeLeft: session.timeLeft,
               started: true,
-              isTrial: session.trialDuration > 0,
+              waiting: false,
+              isTrial: false,
               elapsedSeconds,
-              balance: currentBalance,
+              balance: Math.max(0, currentBalance),
             });
 
             if (session.timeLeft <= 0) {
@@ -293,11 +277,12 @@ io.on("connection", (socket) => {
 
               activeSessions.delete(conversationId);
               const endedMessage =
-                session.pricePerMin === 0 && session.trialDuration > 0
-                  ? "Your free 10-minute signup chat period has ended. Please recharge to continue chatting."
-                  : "Session ended. Please check your balance.";
+                session.pricePerMin > 0
+                  ? "Your wallet balance has run out. Please recharge to continue chatting."
+                  : "Your free guest chat time has ended. Please sign up and recharge to continue.";
               io.to(conversationId).emit("session_ended", {
                 message: endedMessage,
+                balanceExhausted: session.pricePerMin > 0,
               });
             }
           }, 1000);
@@ -309,16 +294,24 @@ io.on("connection", (socket) => {
           const elapsedSeconds = session.actualStartTime
             ? Math.floor((new Date() - session.actualStartTime) / 1000)
             : 0;
-          const billableSeconds = Math.max(0, elapsedSeconds - (session.trialDuration || 0));
-          const billableMinutes = Math.ceil(billableSeconds / 60);
-          const currentBalance = session.initialBalance - (billableMinutes * session.pricePerMin);
+          const billableSeconds = elapsedSeconds;
+          const billableMinutes = getBillableMinutes(billableSeconds);
+          const currentBalance =
+            session.pricePerMin > 0
+              ? Math.max(
+                  0,
+                  session.initialBalance -
+                    billableMinutes * session.pricePerMin,
+                )
+              : session.initialBalance;
 
           socket.emit("timer_sync", {
             timeLeft: session.timeLeft,
             started: session.started,
-            isTrial: session.trialDuration > 0,
+            waiting: !session.started,
+            isTrial: false,
             elapsedSeconds,
-            balance: currentBalance,
+            balance: Math.max(0, currentBalance),
           });
         }
       }
@@ -384,44 +377,99 @@ io.on("connection", (socket) => {
           const wallet = await Wallet.findOne({ userId: session.payerId });
           if (wallet) {
             const newBalance = wallet.balances?.INR || 0;
-            const price = session.pricePerMin || parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
+            const price = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
+            session.trialDuration = 0;
+            session.pricePerMin = price;
 
             const elapsedSeconds = session.actualStartTime
               ? Math.floor((new Date() - session.actualStartTime) / 1000)
               : 0;
 
-            const billableSeconds = Math.max(0, elapsedSeconds - (session.trialDuration || 0));
-            const billableMinutes = Math.ceil(billableSeconds / 60);
-
-            const remainingSecondsInCurrentPeriod = Math.max(
-              0,
-              (session.trialDuration || 0) + (billableMinutes * 60) - elapsedSeconds
-            );
-
-            const availableBalance = Math.max(0, newBalance - (billableMinutes * price));
-            const additionalMinutes = Math.floor(availableBalance / price);
+            const alreadyCharged = getChatChargeForSeconds(elapsedSeconds, price);
+            const availableBalance = Math.max(0, newBalance - alreadyCharged);
 
             session.initialBalance = newBalance;
-            session.timeLeft = remainingSecondsInCurrentPeriod + (additionalMinutes * 60);
+            session.timeLeft = getTimeLeftAfterRecharge(
+              elapsedSeconds,
+              newBalance,
+              price,
+            );
 
             console.log(`♻️ Sync recharge for payer ${session.payerId} in ${conversationId}: new balance=${newBalance}, new timeLeft=${session.timeLeft}`);
+
+            const projectedBalance = Math.max(0, newBalance - alreadyCharged);
 
             io.to(conversationId).emit("timer_sync", {
               timeLeft: session.timeLeft,
               started: true,
-              isTrial: session.trialDuration > 0,
+              isTrial: false,
               elapsedSeconds,
-              balance: newBalance - (billableMinutes * price),
+              balance: projectedBalance,
             });
 
             io.to(conversationId).emit("recharge_applied", {
-              balance: newBalance - (billableMinutes * price),
+              balance: projectedBalance,
               timeLeft: session.timeLeft,
-              message: `Recharge of ₹${newBalance} applied successfully! Chat time extended.`
+              message: `Recharge successful! You can continue chatting.`,
             });
+
+            if (session.timeLeft > 0 && session.started) {
+              if (session.timer) {
+                clearInterval(session.timer);
+                session.timer = null;
+              }
+              session.timer = setInterval(() => {
+                session.timeLeft -= 1;
+                const elapsed = session.actualStartTime
+                  ? Math.floor((new Date() - session.actualStartTime) / 1000)
+                  : 0;
+                const billableMinutes = getBillableMinutes(elapsed);
+                const currentBalance = Math.max(
+                  0,
+                  session.initialBalance -
+                    billableMinutes * session.pricePerMin,
+                );
+                io.to(conversationId).emit("timer_sync", {
+                  timeLeft: session.timeLeft,
+                  started: true,
+                  isTrial: false,
+                  elapsedSeconds: elapsed,
+                  balance: currentBalance,
+                });
+                if (session.timeLeft <= 0) {
+                  clearInterval(session.timer);
+                  processChatBilling(session, conversationId).catch((err) =>
+                    console.error("Error billing session on timer expiry:", err),
+                  );
+                  activeSessions.delete(conversationId);
+                  io.to(conversationId).emit("session_ended", {
+                    message:
+                      "Your wallet balance has run out. Please recharge to continue chatting.",
+                    balanceExhausted: true,
+                  });
+                }
+              }, 1000);
+            }
           }
         } catch (err) {
           console.error("Error syncing recharge inside chat:", err);
+        }
+      } else if (socket.registeredUserId) {
+        try {
+          const wallet = await Wallet.findOne({
+            userId: socket.registeredUserId,
+            isDeleted: false,
+          });
+          if (wallet) {
+            socket.emit("recharge_applied", {
+              balance: wallet.balances?.INR || 0,
+              timeLeft: 0,
+              message:
+                "Recharge successful. Close and start a new chat to continue.",
+            });
+          }
+        } catch (err) {
+          console.error("Error applying recharge after session ended:", err);
         }
       }
     }

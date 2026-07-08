@@ -8,11 +8,6 @@ const { sendPushNotification } = require("../helpers/notification.helper");
 const { processChatBilling } = require("../helpers/chatBilling.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
-const {
-  getSignupTrialRemainingSeconds,
-  hasPaidWalletRecharge,
-  ensureSignupTrialStarted,
-} = require("../helpers/signupTrial.helper");
 
 const sendMessage = async (req, res, next) => {
   try {
@@ -43,16 +38,14 @@ const sendMessage = async (req, res, next) => {
     }
 
     if (sender.role === ROLES.USER) {
-      const refreshedSender = await ensureSignupTrialStarted(sender);
-      const paidRecharge = await hasPaidWalletRecharge(senderId);
-      if (!paidRecharge) {
-        const trialRemaining = getSignupTrialRemainingSeconds(refreshedSender);
-        if (trialRemaining <= 0) {
-          return throwError(
-            403,
-            "Your free 10-minute signup chat period has ended. Please recharge your wallet to continue chatting.",
-          );
-        }
+      const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
+      const balance = wallet?.balances?.INR ?? 0;
+      const pricePerMin = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
+      if (!wallet || balance < pricePerMin) {
+        return throwError(
+          400,
+          `Insufficient wallet balance. Chat costs ₹${pricePerMin} per minute. Please recharge your wallet.`,
+        );
       }
     }
 
@@ -167,22 +160,14 @@ const initiateChat = async (req, res, next) => {
     }
 
     if (sender.role === ROLES.USER) {
-      const refreshedSender = await ensureSignupTrialStarted(sender);
-      const paidRecharge = await hasPaidWalletRecharge(senderId);
-      if (paidRecharge) {
-        const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
-        const balance = wallet?.balances?.INR ?? 0;
-        if (!wallet || balance <= 0) {
-          return throwError(400, "Your wallet balance is exhausted. Please recharge to continue using chats or calls.");
-        }
-      } else {
-        const trialRemaining = getSignupTrialRemainingSeconds(refreshedSender);
-        if (trialRemaining <= 0) {
-          return throwError(
-            403,
-            "Your free 10-minute signup chat period has ended. Please recharge your wallet to continue chatting.",
-          );
-        }
+      const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
+      const balance = wallet?.balances?.INR ?? 0;
+      const pricePerMin = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
+      if (!wallet || balance < pricePerMin) {
+        return throwError(
+          400,
+          "Your wallet balance is exhausted. Please recharge to continue using chats or calls.",
+        );
       }
     }
 
