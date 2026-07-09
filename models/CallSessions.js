@@ -39,6 +39,10 @@ const callSessionSchema = new mongoose.Schema(
     duration: Number, // seconds
     callChargePerMin: Number,
     totalAmountDeducted: Number,
+    callerName: String,
+    callerEmail: String,
+    receiverName: String,
+    receiverEmail: String,
     isMissed: { type: Boolean, default: false },
     endedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },

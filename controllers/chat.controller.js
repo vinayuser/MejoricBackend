@@ -5,6 +5,7 @@ const ChatSession = require("../models/ChatSession");
 const Wallet = require("../models/Wallet");
 const Mate = require("../models/Mate");
 const { sendPushNotification } = require("../helpers/notification.helper");
+const { getUserDisplayName, resolveChatOtherPartyName } = require("../helpers/userDisplayName.helper");
 const { processChatBilling } = require("../helpers/chatBilling.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
@@ -58,9 +59,12 @@ const sendMessage = async (req, res, next) => {
       `[Server Chat] Attempting to create message: sender=${senderId}, recipient=${recipientId}`,
     );
     // Save to DB with explicit casting to avoid any Mongoose version issues
+    const senderDisplayName = getUserDisplayName(sender);
+    const recipientDisplayName = getUserDisplayName(recipient, "Mentor");
+
     const message = await Message.create({
       senderId: new mongoose.Types.ObjectId(senderId.toString()),
-      senderName: sender.name || "User",
+      senderName: senderDisplayName,
       recipientId: new mongoose.Types.ObjectId(recipientId.toString()),
       text,
       conversationId,
@@ -81,6 +85,10 @@ const sendMessage = async (req, res, next) => {
             $setOnInsert: {
               senderId: new mongoose.Types.ObjectId(senderId.toString()),
               recipientId: new mongoose.Types.ObjectId(recipientId.toString()),
+              senderName: senderDisplayName,
+              senderEmail: sender.email?.trim() || "",
+              recipientName: recipientDisplayName,
+              recipientEmail: recipient.email?.trim() || "",
               startTime: new Date(),
               status: "ACTIVE",
             },
@@ -205,17 +213,19 @@ const initiateChat = async (req, res, next) => {
       `[Server Chat] Chat INITIATED by ${senderId} for ${recipientId}. FCM Token present: ${!!recipient.fcmToken}`,
     );
 
+    const senderDisplayName = getUserDisplayName(sender);
+
     if (recipient.fcmToken) {
       await sendPushNotification({
         userId: recipientId,
         fcmToken: recipient.fcmToken,
         title: "New Chat Request",
-        body: `${sender.name || "Someone"} wants to chat with you.`,
+        body: `${senderDisplayName} wants to chat with you.`,
         type: "CHAT_INITIATED",
         data: {
           event: "CHAT_INITIATED",
           senderId: senderId.toString(),
-          senderName: sender.name || "User",
+          senderName: senderDisplayName,
           senderRole: sender.role,
         },
       });
@@ -227,7 +237,7 @@ const initiateChat = async (req, res, next) => {
       io.to(`user_${recipientId}`).emit("notification", {
         type: "CHAT_INITIATED",
         senderId: senderId.toString(),
-        senderName: sender.name || "User",
+        senderName: senderDisplayName,
         senderRole: sender.role,
         text: "wants to chat with you",
         timestamp: Date.now().toString(),
@@ -290,17 +300,20 @@ const acceptChat = async (req, res, next) => {
 
     if (!recipient) return throwError(404, "Recipient not found");
 
+    const senderDisplayName = getUserDisplayName(sender, "Mentor");
+    const recipientDisplayName = getUserDisplayName(recipient);
+
     if (recipient.fcmToken) {
       await sendPushNotification({
         userId: recipientId,
         fcmToken: recipient.fcmToken,
         title: "Chat Accepted",
-        body: `${sender.name || "Mentor"} has joined the chat.`,
+        body: `${senderDisplayName} has joined the chat.`,
         type: "CHAT_ACCEPTED",
         data: {
           event: "CHAT_ACCEPTED",
           senderId: senderId.toString(),
-          senderName: sender.name || "Mentor",
+          senderName: senderDisplayName,
         },
       });
     }
@@ -322,6 +335,10 @@ const acceptChat = async (req, res, next) => {
             $setOnInsert: {
               senderId: new mongoose.Types.ObjectId(recipientId.toString()), // The User (initiator)
               recipientId: new mongoose.Types.ObjectId(senderId.toString()), // The Mate (acceptor)
+              senderName: recipientDisplayName,
+              senderEmail: recipient.email?.trim() || "",
+              recipientName: senderDisplayName,
+              recipientEmail: sender.email?.trim() || "",
               startTime: new Date(),
             },
           },
@@ -436,8 +453,8 @@ const getAllChatHistory = async (req, res, next) => {
     const totalPages = Math.ceil(totalSessions / limit);
 
     const sessions = await ChatSession.find(query)
-      .populate("senderId", "name")
-      .populate("recipientId", "name")
+      .populate("senderId", "name email")
+      .populate("recipientId", "name email")
       .sort({ startTime: -1 })
       .skip(skip)
       .limit(limit);
@@ -459,7 +476,7 @@ const getAllChatHistory = async (req, res, next) => {
         id: session._id,
         otherUser: {
           _id: otherUser?._id,
-          name: otherUser?.name || "Guest User",
+          name: resolveChatOtherPartyName(session, isMeSender, otherUser),
         },
         startTime: session.startTime,
         endTime: session.endTime,

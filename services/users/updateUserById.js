@@ -89,8 +89,10 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
       // }
       if (isOnline !== undefined) {
         mateUpdate.isAvailable = isOnline;
+        user.isOnline = isOnline;
       } else if (isAvailable !== undefined) {
         mateUpdate.isAvailable = isAvailable;
+        user.isOnline = isAvailable;
       }
       if (bio !== undefined) {
         mateUpdate.bio = bio?.trim()

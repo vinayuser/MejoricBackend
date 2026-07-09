@@ -5,8 +5,13 @@ const CallSession = require("../models/CallSessions");
 const CallLog = require("../models/CallLogs");
 const WalletTransaction = require("../models/WalletTransaction");
 
-const { createRoom, createToken } = require("../helpers/enablex.helper");
+const {
+  buildCallChannelName,
+  buildAgoraSession,
+  isAgoraConfigured,
+} = require("../helpers/agora.helper");
 const { sendPushNotification } = require("../helpers/notification.helper");
+const { getUserDisplayName, resolveCallOtherPartyName } = require("../helpers/userDisplayName.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
 
@@ -82,42 +87,42 @@ const initiateCall = async (req, res, next) => {
         return throwError(400, "Receiver is busy! Please try calling later.");
       }
     }
-    // EnableX - Create Room
-    const roomName = `Call_${callerId}_to_${receiverId}`;
-    const roomData = await createRoom(roomName, callType);
-    const roomId = roomData.room.room_id;
-    let remainingMinutes = 0;
-    if (callType == "AUDIO") {
-      remainingMinutes = Math.floor(
-        wallet.balances?.INR / minimumBalanceRequired,
-      );
-    } else {
-      remainingMinutes = Math.floor(
-        wallet.balances?.INR / minimumBalanceRequired,
+    // Agora RTC channel (replaces EnableX room)
+    if (!isAgoraConfigured()) {
+      console.warn(
+        "[Calls] AGORA_APP_ID / AGORA_APP_CERTIFICATE not set — using mock tokens.",
       );
     }
-    // Create Token for Caller
-    const callerToken = await createToken(
-      roomId,
-      callerId.toString(),
-      callType,
-      "participant",
-    );
-    // Create Session DB
+
+    let remainingMinutes = 0;
+    remainingMinutes = Math.floor(wallet.balances?.INR / minimumBalanceRequired);
+
+    const callerDisplayName = getUserDisplayName(caller);
+    const receiverDisplayName = getUserDisplayName(receiver, "Mentor");
+
     const callSession = await CallSession.create({
       callerId,
       receiverId,
       callType,
       callStatus: "INITIATED",
-      roomId,
-      tokenCaller: callerToken,
       callChargePerMin: minimumBalanceRequired,
+      callerName: caller.name?.trim() || callerDisplayName,
+      callerEmail: caller.email?.trim() || "",
+      receiverName: receiver.name?.trim() || receiverDisplayName,
+      receiverEmail: receiver.email?.trim() || "",
     });
+
+    const channelName = buildCallChannelName(callSession._id);
+    const callerAgora = buildAgoraSession(channelName, callerId);
+
+    callSession.roomId = channelName;
+    callSession.tokenCaller = callerAgora.token;
+    await callSession.save();
     // Add to CallLog
     await CallLog.create({
       callSessionId: callSession._id,
       event: "INITIATED",
-      meta: { callerId, receiverId, callType, roomId },
+      meta: { callerId, receiverId, callType, roomId: channelName },
     });
     // Push Notification to Receiver
     // They will get the callSessionId which they will use to accept/reject
@@ -125,14 +130,15 @@ const initiateCall = async (req, res, next) => {
       userId: receiverId,
       fcmToken: receiver.fcmToken,
       title: "Incoming Call",
-      body: `${caller.name || "Someone"} is calling you.`,
+      body: `${callerDisplayName} is calling you.`,
       type: "CALL",
       referenceId: callSession._id,
       data: {
         callSessionId: callSession._id.toString(),
-        callerName: caller.name || "Someone",
+        callerName: callerDisplayName,
         callType: callType,
-        roomId: roomId,
+        roomId: channelName,
+        provider: "agora",
       },
     });
 
@@ -142,9 +148,10 @@ const initiateCall = async (req, res, next) => {
       io.to(`user_${receiverId}`).emit("notification", {
         type: "INCOMING_CALL",
         callSessionId: callSession._id.toString(),
-        callerName: caller.name || "Someone",
+        callerName: callerDisplayName,
         callType: callType,
-        roomId: roomId,
+        roomId: channelName,
+        provider: "agora",
       });
     }
     return res.status(200).json({
@@ -152,8 +159,11 @@ const initiateCall = async (req, res, next) => {
       message: "Call initiated successfully",
       data: {
         callSessionId: callSession._id,
-        roomId,
-        callerToken,
+        roomId: channelName,
+        channelName,
+        callerToken: callerAgora.token,
+        agora: callerAgora,
+        callType: callType.toLowerCase(),
         remainingMinutes,
       },
     });
@@ -183,16 +193,18 @@ const acceptCall = async (req, res, next) => {
         `Call cannot be accepted. Current status is ${callSession.callStatus}`,
       );
     }
-    // Generate Token for Receiver
-    const receiverToken = await createToken(
-      callSession.roomId,
-      receiverId.toString(),
-      callSession.callType,
-      "participant",
-    );
+    const channelName = callSession.roomId;
+    const receiverAgora = buildAgoraSession(channelName, receiverId);
+
     callSession.callStatus = "ACCEPTED";
-    callSession.tokenReceiver = receiverToken;
+    callSession.tokenReceiver = receiverAgora.token;
     callSession.startTime = new Date();
+    if (!callSession.receiverName?.trim()) {
+      callSession.receiverName = getUserDisplayName(receiver, "Mentor");
+    }
+    if (!callSession.receiverEmail?.trim() && receiver.email?.trim()) {
+      callSession.receiverEmail = receiver.email.trim();
+    }
     await callSession.save();
     await CallLog.create({
       callSessionId: callSession._id,
@@ -223,8 +235,11 @@ const acceptCall = async (req, res, next) => {
       success: true,
       message: "Call accepted",
       data: {
-        roomId: callSession.roomId,
-        receiverToken,
+        roomId: channelName,
+        channelName,
+        receiverToken: receiverAgora.token,
+        agora: receiverAgora,
+        callType: callSession.callType.toLowerCase(),
       },
     });
   } catch (error) {
@@ -329,7 +344,10 @@ const endCall = async (req, res, next) => {
           await callerWallet.save();
 
           const minLabel = diffMinutes === 1 ? "min" : "mins";
-          const callDescription = `${callSession.callType === "AUDIO" ? "Audio Call" : "Video Call"} with ${receiverUser?.name || "Mentor"} (${diffMinutes} ${minLabel})`;
+          const receiverLabel =
+            callSession.receiverName?.trim() ||
+            getUserDisplayName(receiverUser, "Mentor");
+          const callDescription = `${callSession.callType === "AUDIO" ? "Audio Call" : "Video Call"} with ${receiverLabel} (${diffMinutes} ${minLabel})`;
 
           await WalletTransaction.create({
             walletId: callerWallet._id,
@@ -381,7 +399,10 @@ const endCall = async (req, res, next) => {
             await receiverWallet.save();
 
             const minLabelRec = diffMinutes === 1 ? "min" : "mins";
-            const callDescriptionRec = `${callSession.callType === "AUDIO" ? "Audio Call" : "Video Call"} with ${callerUser?.name || "User"} (${diffMinutes} ${minLabelRec}, ${mateSharePercent}% share)`;
+            const callerLabel =
+              callSession.callerName?.trim() ||
+              getUserDisplayName(callerUser, "User");
+            const callDescriptionRec = `${callSession.callType === "AUDIO" ? "Audio Call" : "Video Call"} with ${callerLabel} (${diffMinutes} ${minLabelRec}, ${mateSharePercent}% share)`;
 
             await WalletTransaction.create({
               walletId: receiverWallet._id,
@@ -483,13 +504,15 @@ const getPendingIncoming = async (req, res, next) => {
       callStatus: { $in: ["INITIATED", "RINGING"] },
     })
       .sort({ createdAt: -1 })
-      .populate("callerId", "name");
+      .populate("callerId", "name email");
 
     if (!session) {
       return res.status(200).json({ success: true, data: null });
     }
 
-    const callerName = session.callerId?.name || "Someone";
+    const callerName =
+      session.callerName?.trim() ||
+      getUserDisplayName(session.callerId, "User");
 
     return res.status(200).json({
       success: true,
@@ -531,11 +554,18 @@ const getCallHistory = async (req, res, next) => {
     }
 
     const calls = await CallSession.find(query)
-      .populate("callerId", "name image")
-      .populate("receiverId", "name image")
+      .populate("callerId", "name email image")
+      .populate("receiverId", "name email image")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit);
+
+    const userIdStr = String(userId);
+    const data = calls.map((call) => {
+      const doc = call.toObject();
+      doc.otherPartyName = resolveCallOtherPartyName(call, userIdStr);
+      return doc;
+    });
 
     // Calculate global stats for all calls matching the query
     const stats = await CallSession.aggregate([
@@ -557,8 +587,45 @@ const getCallHistory = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: "Call history fetched",
-      data: calls,
+      data,
       pagination: { page, limit, total, totalMinutes },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getCallAgoraToken = async (req, res, next) => {
+  try {
+    const userId = req.userId;
+    const { callSessionId } = req.params;
+
+    const callSession = await CallSession.findById(callSessionId);
+    if (!callSession) return throwError(404, "Call session not found");
+
+    const isParticipant =
+      callSession.callerId.toString() === userId.toString() ||
+      callSession.receiverId.toString() === userId.toString();
+    if (!isParticipant) {
+      return throwError(403, "You are not part of this call");
+    }
+
+    if (!["INITIATED", "RINGING", "ACCEPTED", "ONGOING"].includes(callSession.callStatus)) {
+      return throwError(400, "Call is no longer active");
+    }
+
+    const channelName = callSession.roomId;
+    if (!channelName) return throwError(400, "Call channel not found");
+
+    const agora = buildAgoraSession(channelName, userId);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        agora,
+        callType: callSession.callType.toLowerCase(),
+        callSessionId: callSession._id,
+      },
     });
   } catch (error) {
     next(error);
@@ -572,4 +639,5 @@ module.exports = {
   endCall,
   getPendingIncoming,
   getCallHistory,
+  getCallAgoraToken,
 };

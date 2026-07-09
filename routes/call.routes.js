@@ -57,4 +57,10 @@ router.get(
     callController.getPendingIncoming,
 );
 
+router.get(
+    '/:callSessionId/agora-token',
+    verifyJwtToken,
+    callController.getCallAgoraToken,
+);
+
 module.exports = { router, routePrefix: '/calls' };

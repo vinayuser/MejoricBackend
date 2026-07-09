@@ -44,6 +44,10 @@ const chatSessionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    senderName: String,
+    senderEmail: String,
+    recipientName: String,
+    recipientEmail: String,
   },
   { timestamps: true },
 );

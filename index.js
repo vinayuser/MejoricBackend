@@ -77,13 +77,28 @@ const {
 io.on("connection", (socket) => {
   console.log("🔌 New socket connection:", socket.id);
 
-  socket.on("register_user", (userId) => {
-    if (userId) {
-      socket.join(`user_${userId}`);
-      socket.registeredUserId = String(userId);
-      registerMateSocket(socket.registeredUserId, socket.id);
-      console.log(`📡 User ${userId} registered for private notifications`);
+  socket.on("register_user", async (userId) => {
+    if (!userId) return;
+
+    const uid = String(userId);
+    socket.join(`user_${uid}`);
+    socket.registeredUserId = uid;
+
+    try {
+      const registeredUser = await User.findById(uid).select("role").lean();
+      if (
+        registeredUser &&
+        (registeredUser.role === ROLES.MATE ||
+          registeredUser.role === ROLES.MENTOR)
+      ) {
+        socket.tracksMatePresence = true;
+        registerMateSocket(uid, socket.id);
+      }
+    } catch (err) {
+      console.error("register_user presence lookup failed:", err.message);
     }
+
+    console.log(`📡 User ${uid} registered for private notifications`);
   });
 
   socket.on("join_admin_mate_tracking", () => {
@@ -478,7 +493,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log("🔌 Socket disconnected:", socket.id);
 
-    if (socket.registeredUserId) {
+    if (socket.registeredUserId && socket.tracksMatePresence) {
       unregisterMateSocket(socket.registeredUserId, socket.id);
     }
 
