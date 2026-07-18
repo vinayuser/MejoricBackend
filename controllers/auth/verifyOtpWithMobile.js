@@ -26,6 +26,7 @@ exports.verifyOtpWithMobile = asyncWrapper(async (req, res) => {
     user.loginType = loginType;
     user.isMobileVerified = true;
     user.isEmailVerified = true;
+    user.isSignUpCompleted = true;
     user.isLoggedIn = true;
     user.isOnline = true;
     if (currentScreen) user.currentScreen = currentScreen;

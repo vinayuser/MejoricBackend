@@ -5,14 +5,12 @@ const WalletTransaction = require("../../models/WalletTransaction");
 const RazorpayTransaction = require("../../models/RazorpayTransaction");
 const { getOrCreateWallet } = require("./getOrCreateWallet");
 const { throwError } = require("../../utils");
+const { isMockPaymentsEnabled, isMockPaymentId } = require("../../helpers/mockPayments.helper");
 
 exports.verifyWalletTopup = async (userId, payload) => {
   const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = payload;
 
-  // Mock payment bypass for local development
-  console.log("Verify Request:", { razorpayPaymentId, APP_ENV: process.env.APP_ENV, NODE_ENV: process.env.NODE_ENV });
-  if (razorpayPaymentId.startsWith("mock_") && process.env.ALLOW_MOCK_PAYMENTS === "true") {
-    console.log("Mock payment detected, bypassing Razorpay verification");
+  if (isMockPaymentId(razorpayPaymentId) && isMockPaymentsEnabled()) {
     const mockAmount = Number(payload.amount) || 100;
     const currency = payload.currency || "INR";
 

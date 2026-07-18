@@ -21,7 +21,7 @@ const MINIMUM_BALANCE_REQUIRED_FOR_VIDEO_CALL = parseInt(process.env.VIDEO_CALL_
 const initiateCall = async (req, res, next) => {
   try {
     const callerId = req.userId;
-    const { receiverId, callType } = req.body;
+    const { receiverId, callType, deferRing = false } = req.body;
 
     // Block guest users from making calls
     const caller = await User.findById(callerId);
@@ -84,7 +84,17 @@ const initiateCall = async (req, res, next) => {
         return throwError(400, "Receiver is offline! Please try calling when they are online.");
       }
       if (receiverMate.isBusy) {
-        return throwError(400, "Receiver is busy! Please try calling later.");
+        // Clear stale busy if there is no active accepted call
+        const activeAccepted = await CallSession.findOne({
+          receiverId,
+          callStatus: "ACCEPTED",
+        }).select("_id");
+        if (!activeAccepted) {
+          receiverMate.isBusy = false;
+          await receiverMate.save();
+        } else {
+          return throwError(400, "Receiver is busy! Please try calling later.");
+        }
       }
     }
     // Agora RTC channel (replaces EnableX room)
@@ -114,49 +124,59 @@ const initiateCall = async (req, res, next) => {
 
     const channelName = buildCallChannelName(callSession._id);
     const callerAgora = buildAgoraSession(channelName, callerId);
+    console.log("[Calls] initiate Agora session", {
+      callSessionId: String(callSession._id),
+      channelName,
+      callerUid: callerAgora.uid,
+      appId: callerAgora.appId,
+      tokenLen: callerAgora.token?.length,
+    });
 
     callSession.roomId = channelName;
     callSession.tokenCaller = callerAgora.token;
     await callSession.save();
-    // Add to CallLog
     await CallLog.create({
       callSessionId: callSession._id,
       event: "INITIATED",
-      meta: { callerId, receiverId, callType, roomId: channelName },
-    });
-    // Push Notification to Receiver
-    // They will get the callSessionId which they will use to accept/reject
-    await sendPushNotification({
-      userId: receiverId,
-      fcmToken: receiver.fcmToken,
-      title: "Incoming Call",
-      body: `${callerDisplayName} is calling you.`,
-      type: "CALL",
-      referenceId: callSession._id,
-      data: {
-        callSessionId: callSession._id.toString(),
-        callerName: callerDisplayName,
-        callType: callType,
-        roomId: channelName,
-        provider: "agora",
-      },
+      meta: { callerId, receiverId, callType, roomId: channelName, deferRing: Boolean(deferRing) },
     });
 
-    // Real-time socket fallback
-    const io = req.app.get("io");
-    if (io) {
-      io.to(`user_${receiverId}`).emit("notification", {
-        type: "INCOMING_CALL",
-        callSessionId: callSession._id.toString(),
-        callerName: callerDisplayName,
-        callType: callType,
-        roomId: channelName,
-        provider: "agora",
+    // Only ring the mate after the caller has mic/camera + channel ready (client calls /calls/ring).
+    if (!deferRing) {
+      await sendPushNotification({
+        userId: receiverId,
+        fcmToken: receiver.fcmToken,
+        title: "Incoming Call",
+        body: `${callerDisplayName} is calling you.`,
+        type: "CALL",
+        referenceId: callSession._id,
+        data: {
+          callSessionId: callSession._id.toString(),
+          callerName: callerDisplayName,
+          callType: callType,
+          roomId: channelName,
+          provider: "agora",
+        },
       });
+
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user_${receiverId}`).emit("notification", {
+          type: "INCOMING_CALL",
+          callSessionId: callSession._id.toString(),
+          callerName: callerDisplayName,
+          callType: callType,
+          roomId: channelName,
+          provider: "agora",
+        });
+      }
     }
+
     return res.status(200).json({
       success: true,
-      message: "Call initiated successfully",
+      message: deferRing
+        ? "Call session created. Ring the receiver after media is ready."
+        : "Call initiated successfully",
       data: {
         callSessionId: callSession._id,
         roomId: channelName,
@@ -165,7 +185,97 @@ const initiateCall = async (req, res, next) => {
         agora: callerAgora,
         callType: callType.toLowerCase(),
         remainingMinutes,
+        deferredRing: Boolean(deferRing),
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const ringCall = async (req, res, next) => {
+  try {
+    const callerId = req.userId;
+    const { callSessionId } = req.body;
+    if (!callSessionId) return throwError(400, "callSessionId is required");
+
+    const callSession = await CallSession.findById(callSessionId).populate(
+      "receiverId",
+      "fcmToken name email mobile role",
+    );
+    if (!callSession) return throwError(404, "Call session not found");
+
+    if (callSession.callerId.toString() !== callerId.toString()) {
+      return throwError(403, "Only the caller can ring the receiver");
+    }
+
+    if (
+      callSession.callStatus !== "INITIATED" &&
+      callSession.callStatus !== "RINGING"
+    ) {
+      return throwError(
+        400,
+        `Cannot ring now. Current status is ${callSession.callStatus}`,
+      );
+    }
+
+    // Already ringing — idempotent success
+    if (callSession.callStatus === "RINGING") {
+      return res.status(200).json({
+        success: true,
+        message: "Receiver already notified",
+        data: { callSessionId: callSession._id },
+      });
+    }
+
+    const receiver = callSession.receiverId;
+    if (!receiver) return throwError(404, "Receiver not found");
+
+    callSession.callStatus = "RINGING";
+    await callSession.save();
+
+    const callerDisplayName =
+      callSession.callerName?.trim() ||
+      getUserDisplayName(await User.findById(callerId), "User");
+
+    await CallLog.create({
+      callSessionId: callSession._id,
+      event: "RINGING",
+      meta: { callerId, receiverId: receiver._id },
+    });
+
+    await sendPushNotification({
+      userId: receiver._id,
+      fcmToken: receiver.fcmToken,
+      title: "Incoming Call",
+      body: `${callerDisplayName} is calling you.`,
+      type: "CALL",
+      referenceId: callSession._id,
+      data: {
+        callSessionId: callSession._id.toString(),
+        callerName: callerDisplayName,
+        callType: callSession.callType,
+        roomId: callSession.roomId,
+        provider: "agora",
+      },
+    });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${receiver._id}`).emit("notification", {
+        type: "INCOMING_CALL",
+        callSessionId: callSession._id.toString(),
+        callerName: callerDisplayName,
+        callType: callSession.callType,
+        roomId: callSession.roomId,
+        provider: "agora",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Receiver notified",
+      data: { callSessionId: callSession._id },
     });
   } catch (error) {
     next(error);
@@ -195,6 +305,13 @@ const acceptCall = async (req, res, next) => {
     }
     const channelName = callSession.roomId;
     const receiverAgora = buildAgoraSession(channelName, receiverId);
+    console.log("[Calls] accept Agora session", {
+      callSessionId: String(callSession._id),
+      channelName,
+      receiverUid: receiverAgora.uid,
+      appId: receiverAgora.appId,
+      tokenLen: receiverAgora.token?.length,
+    });
 
     callSession.callStatus = "ACCEPTED";
     callSession.tokenReceiver = receiverAgora.token;
@@ -285,8 +402,26 @@ const rejectCall = async (req, res, next) => {
         body: "User rejected the call",
         type: "CALL",
         referenceId: callSession._id,
-        data: { event: "REJECTED" },
+        data: {
+          event: "REJECTED",
+          callSessionId: callSession._id.toString(),
+        },
       });
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${callSession.callerId._id}`).emit("notification", {
+        type: "CALL_ENDED",
+        callSessionId: callSessionId.toString(),
+        reason: "REJECTED",
+      });
+    }
+
+    const mate = await Mate.findOne({ userId: receiverId });
+    if (mate?.isBusy) {
+      mate.isBusy = false;
+      await mate.save();
     }
 
     return res.status(200).json({
@@ -453,7 +588,10 @@ const endCall = async (req, res, next) => {
         body: "The call was ended",
         type: "CALL",
         referenceId: callSession._id,
-        data: { event: "ENDED" },
+        data: {
+          event: "ENDED",
+          callSessionId: callSession._id.toString(),
+        },
       });
     }
 
@@ -501,12 +639,18 @@ const getPendingIncoming = async (req, res, next) => {
     const userId = req.userId;
     const session = await CallSession.findOne({
       receiverId: userId,
-      callStatus: { $in: ["INITIATED", "RINGING"] },
+      callStatus: "RINGING",
     })
       .sort({ createdAt: -1 })
       .populate("callerId", "name email");
 
     if (!session) {
+      return res.status(200).json({ success: true, data: null });
+    }
+
+    // Ignore stale rings older than 60s
+    const ageMs = Date.now() - new Date(session.createdAt).getTime();
+    if (ageMs > 60000) {
       return res.status(200).json({ success: true, data: null });
     }
 
@@ -634,6 +778,7 @@ const getCallAgoraToken = async (req, res, next) => {
 
 module.exports = {
   initiateCall,
+  ringCall,
   acceptCall,
   rejectCall,
   endCall,

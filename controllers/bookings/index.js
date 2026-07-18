@@ -19,6 +19,11 @@ const {
   getUserBookings,
 } = require("../../services/bookings");
 const {
+  createBookingPaymentOrder,
+  verifyBookingPaymentAndCreate,
+} = require("../../services/bookings/paymentOrder");
+const { getBookingSessionToken } = require("../../services/bookings/sessionToken");
+const {
   validateCreateBooking,
   validateAdminBookingsQuery,
   validateBookedSlotsQuery,
@@ -27,6 +32,7 @@ const {
   validateMentorAppointmentsQuery,
   validateAvailableDatesQuery,
   validateUserBookingsQuery,
+  validateVerifyBookingPayment,
 } = require("../../validator/bookings");
 
 function ensureMentor(req) {
@@ -44,9 +50,37 @@ exports.createBooking = asyncWrapper(async (req, res) => {
   const booking = await createBooking({
     ...value,
     userId: req.userId || null,
+    paymentStatus: "paid",
   });
 
   return sendSuccess(res, 201, "Appointment booked successfully", booking);
+});
+
+exports.createBookingPaymentOrder = asyncWrapper(async (req, res) => {
+  const { error, value } = validateCreateBooking(req.body);
+  if (error) throwError(422, cleanJoiError(error));
+
+  validateObjectId(value.mentorId, "Mentor ID");
+
+  const result = await createBookingPaymentOrder(req.userId, value);
+  return sendSuccess(res, 200, "Payment order created", result);
+});
+
+exports.verifyBookingPayment = asyncWrapper(async (req, res) => {
+  const { error, value } = validateVerifyBookingPayment(req.body);
+  if (error) throwError(422, cleanJoiError(error));
+
+  const { booking, alreadyProcessed } = await verifyBookingPaymentAndCreate(
+    req.userId,
+    value,
+  );
+
+  return sendSuccess(
+    res,
+    201,
+    alreadyProcessed ? "Booking already confirmed" : "Payment verified and booking confirmed",
+    booking,
+  );
 });
 
 exports.getBookedSlots = asyncWrapper(async (req, res) => {
@@ -68,7 +102,7 @@ exports.getPublicAvailability = asyncWrapper(async (req, res) => {
     return sendSuccess(res, 200, "Available slots fetched", { slots: [] });
   }
 
-  const slots = await getPublicAvailableSlots(mentorId, value.dateKey);
+  const slots = await getPublicAvailableSlots(mentorId, value.dateKey, req.userId || null);
   return sendSuccess(res, 200, "Available slots fetched", { slots });
 });
 
@@ -82,6 +116,7 @@ exports.getPublicAvailableDates = asyncWrapper(async (req, res) => {
     req.params.mentorId,
     value.year,
     value.month,
+    req.userId || null,
   );
   return sendSuccess(res, 200, "Available dates fetched", { dates });
 });
@@ -126,6 +161,13 @@ exports.getMyBookings = asyncWrapper(async (req, res) => {
 
   const result = await getUserBookings(req.userId, value);
   return sendSuccess(res, 200, "Bookings fetched", result);
+});
+
+exports.getBookingSessionToken = asyncWrapper(async (req, res) => {
+  validateObjectId(req.params.bookingId, "Booking ID");
+
+  const session = await getBookingSessionToken(req.userId, req.params.bookingId);
+  return sendSuccess(res, 200, "Session token generated", session);
 });
 
 exports.getAdminBookings = asyncWrapper(async (req, res) => {

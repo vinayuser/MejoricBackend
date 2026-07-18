@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "nodemon --delay 500ms index",
     "start": "node index",
+    "seed:communities": "node scripts/seedCommunities.js",
+    "seed:therapy": "node scripts/seedTherapy.js",
     "check-sessions": "node scratch/check_sessions.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -23,6 +25,7 @@
     "@sentry/profiling-node": "^10.52.0",
     "agora-access-token": "^2.0.4",
     "axios": "^1.13.2",
+    "bad-words": "^3.0.4",
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.8.0",
     "cookie-parser": "^1.4.7",

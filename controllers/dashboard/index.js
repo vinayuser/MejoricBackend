@@ -201,351 +201,77 @@ const getDashboard = async (req, res) => {
   }
 };
 
-// @desc    Get detailed financial statistics
+// @desc    Get financial overview (KPIs + timeline)
 // @route   GET /dashboard/financials
 // @access  Private (Admin)
 const getFinancials = async (req, res) => {
   try {
-    const WalletTransaction = require("../../models/WalletTransaction");
-    const CallSession = require("../../models/CallSessions");
-    const ChatSession = require("../../models/ChatSession");
-    const Wallet = require("../../models/Wallet");
-    const User = require("../../models/User");
-
-    // 1. Recharges and Spending Aggregation per User
-    const rechargeSpending = await WalletTransaction.aggregate([
-      { $match: { isDeleted: false, status: "SUCCESS" } },
-      {
-        $group: {
-          _id: "$userId",
-          totalRecharged: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$type", "CREDIT"] },
-                    { $in: ["$source", ["RAZORPAY", "ADMIN", "MOCK_PAYMENT"]] }
-                  ]
-                },
-                "$amount",
-                0
-              ]
-            }
-          },
-          totalSpent: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$type", "DEBIT"] },
-                    { $in: ["$source", ["CALL", "CHAT"]] }
-                  ]
-                },
-                "$amount",
-                0
-              ]
-            }
-          }
-        }
-      },
-      {
-        $lookup: {
-          from: "users",
-          localField: "_id",
-          foreignField: "_id",
-          as: "user"
-        }
-      },
-      { $unwind: "$user" },
-      {
-        $lookup: {
-          from: "wallets",
-          localField: "_id",
-          foreignField: "userId",
-          as: "wallet"
-        }
-      },
-      {
-        $project: {
-          _id: 1,
-          totalRecharged: 1,
-          totalSpent: 1,
-          userName: "$user.name",
-          userEmail: "$user.email",
-          userPhone: "$user.phone",
-          userRole: "$user.role",
-          walletBalance: {
-            $ifNull: [
-              { $arrayElemAt: ["$wallet.balances.INR", 0] },
-              0
-            ]
-          }
-        }
-      },
-      { $sort: { totalRecharged: -1 } }
-    ]);
-
-    // 2. Fetch recent transactions for recharges & spending details
-    const recentTx = await WalletTransaction.find({
-      isDeleted: false,
-      status: "SUCCESS"
-    })
-      .populate({ path: "userId", select: "name email role" })
-      .sort({ createdAt: -1 })
-      .limit(200);
-
-    // 3. Mate Call & Chat Payouts (grouped daily)
-    const callSessions = await CallSession.find({ callStatus: "ENDED" })
-      .populate({ path: "callerId", select: "name email" })
-      .populate({ path: "receiverId", select: "name email" })
-      .sort({ createdAt: -1 });
-
-    const chatSessions = await ChatSession.find({ status: "ENDED" })
-      .populate({ path: "senderId", select: "name email" })
-      .populate({ path: "recipientId", select: "name email" })
-      .sort({ createdAt: -1 });
-
-    // Fetch all users who have successfully recharged to distinguish free welcome credits
-    const rechargedUsers = await WalletTransaction.distinct("userId", {
-      isDeleted: false,
-      status: "SUCCESS",
-      type: "CREDIT",
-      source: { $in: ["RAZORPAY", "ADMIN", "MOCK_PAYMENT"] }
-    });
-    const rechargedUsersSet = new Set(rechargedUsers.map((id) => id.toString()));
-
-    const dailyEarningsMap = {};
-    const mateSharePercent = parseFloat(process.env.MATE_SHARE_PERCENTAGE) || 60;
-
-    // Process Calls
-    for (const session of callSessions) {
-      const dateStr = new Date(session.createdAt || session.startTime).toLocaleDateString("en-GB"); // Format: DD/MM/YYYY
-      if (!dailyEarningsMap[dateStr]) {
-        dailyEarningsMap[dateStr] = {
-          date: dateStr,
-          totalMateEarnings: 0,
-          totalPlatformEarnings: 0,
-          calls: []
-        };
-      }
-
-      const callerIdStr = session.callerId?._id?.toString() || session.callerId?.toString();
-      const isFreeSession = !rechargedUsersSet.has(callerIdStr);
-
-      const callerName = session.callerId?.name || "User";
-      const mateName = session.receiverId?.name || "Mate";
-      const totalAmountDeducted = session.totalAmountDeducted || 0;
-
-      const mateShare = isFreeSession ? 0 : Number((totalAmountDeducted * (mateSharePercent / 100)).toFixed(2));
-      const platformShare = isFreeSession ? 0 : Number((totalAmountDeducted * ((100 - mateSharePercent) / 100)).toFixed(2));
-
-      dailyEarningsMap[dateStr].totalMateEarnings += mateShare;
-      dailyEarningsMap[dateStr].totalPlatformEarnings += platformShare;
-      dailyEarningsMap[dateStr].calls.push({
-        transactionId: session._id,
-        mateName,
-        callerName,
-        callType: session.callType || "AUDIO",
-        duration: session.duration || 0,
-        totalAmountDeducted,
-        mateShare,
-        platformShare,
-        isFreeSession,
-        createdAt: session.createdAt || session.startTime
-      });
-    }
-
-    // Process Chats
-    for (const session of chatSessions) {
-      const dateStr = new Date(session.createdAt || session.startTime).toLocaleDateString("en-GB"); // Format: DD/MM/YYYY
-      if (!dailyEarningsMap[dateStr]) {
-        dailyEarningsMap[dateStr] = {
-          date: dateStr,
-          totalMateEarnings: 0,
-          totalPlatformEarnings: 0,
-          calls: []
-        };
-      }
-
-      const senderIdStr = session.senderId?._id?.toString() || session.senderId?.toString();
-      const isFreeSession = !rechargedUsersSet.has(senderIdStr);
-
-      const callerName = session.senderId?.name || "User";
-      const mateName = session.recipientId?.name || "Mate";
-      const totalAmountDeducted = session.totalAmountDeducted || 0;
-
-      const mateShare = isFreeSession ? 0 : Number((totalAmountDeducted * (mateSharePercent / 100)).toFixed(2));
-      const platformShare = isFreeSession ? 0 : Number((totalAmountDeducted * ((100 - mateSharePercent) / 100)).toFixed(2));
-
-      dailyEarningsMap[dateStr].totalMateEarnings += mateShare;
-      dailyEarningsMap[dateStr].totalPlatformEarnings += platformShare;
-      dailyEarningsMap[dateStr].calls.push({
-        transactionId: session._id,
-        mateName,
-        callerName,
-        callType: "CHAT",
-        duration: session.duration || 0,
-        totalAmountDeducted,
-        mateShare,
-        platformShare,
-        isFreeSession,
-        createdAt: session.createdAt || session.startTime
-      });
-    }
-
-    for (const dateStr in dailyEarningsMap) {
-      dailyEarningsMap[dateStr].calls.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      dailyEarningsMap[dateStr].totalMateEarnings = Number(dailyEarningsMap[dateStr].totalMateEarnings.toFixed(2));
-      dailyEarningsMap[dateStr].totalPlatformEarnings = Number(dailyEarningsMap[dateStr].totalPlatformEarnings.toFixed(2));
-    }
-
-    const dailyEarnings = Object.values(dailyEarningsMap).sort((a, b) => {
-      // Sort daily earnings descending by date
-      const [dayA, monthA, yearA] = a.date.split("/");
-      const [dayB, monthB, yearB] = b.date.split("/");
-      return new Date(yearB, monthB - 1, dayB) - new Date(yearA, monthA - 1, dayA);
-    });
-
-    // 4. Overall Platform Financial Overview
-    // Capital added via Recharges
-    const totalRechargeCredits = await WalletTransaction.aggregate([
-      {
-        $match: {
-          isDeleted: false,
-          status: "SUCCESS",
-          type: "CREDIT",
-          source: { $in: ["RAZORPAY", "ADMIN", "MOCK_PAYMENT"] }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: "$amount" }
-        }
-      }
-    ]);
-    const totalRevenue = totalRechargeCredits[0]?.total || 0;
-
-    // Total spent in sessions (Call + Chat) debited from users
-    const totalSessionSpends = await WalletTransaction.aggregate([
-      {
-        $match: {
-          isDeleted: false,
-          status: "SUCCESS",
-          type: "DEBIT",
-          source: { $in: ["CALL", "CHAT"] }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: "$amount" }
-        }
-      }
-    ]);
-    const totalUserSpends = totalSessionSpends[0]?.total || 0;
-
-    // Total distributed to Mates (Credit from Call + Chat)
-    const totalMateCredits = await WalletTransaction.aggregate([
-      {
-        $match: {
-          isDeleted: false,
-          status: "SUCCESS",
-          type: "CREDIT",
-          source: { $in: ["CALL", "CHAT"] },
-          "metadata.role": "receiver"
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: "$amount" }
-        }
-      }
-    ]);
-    const totalMatePayout = totalMateCredits[0]?.total || 0;
-
-    // Net platform profit (Real Recharges - distributed payout)
-    const netPlatformProfit = Math.max(0, totalRevenue - totalMatePayout);
-
-    // 5. 30-Day Daily Chart Timeline (Combines Recharges & distributed Payouts)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const timelineRecharges = await WalletTransaction.aggregate([
-      {
-        $match: {
-          isDeleted: false,
-          status: "SUCCESS",
-          type: "CREDIT",
-          source: { $in: ["RAZORPAY", "ADMIN", "MOCK_PAYMENT"] },
-          createdAt: { $gte: thirtyDaysAgo }
-        }
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          total: { $sum: "$amount" }
-        }
-      }
-    ]);
-
-    const timelinePayouts = await WalletTransaction.aggregate([
-      {
-        $match: {
-          isDeleted: false,
-          status: "SUCCESS",
-          type: "CREDIT",
-          source: { $in: ["CALL", "CHAT"] },
-          "metadata.role": "receiver",
-          createdAt: { $gte: thirtyDaysAgo }
-        }
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          total: { $sum: "$amount" }
-        }
-      }
-    ]);
-
-    // Merge timeline maps
-    const timelineMap = {};
-    for (const item of timelineRecharges) {
-      timelineMap[item._id] = { date: item._id, recharges: item.total, payouts: 0 };
-    }
-    for (const item of timelinePayouts) {
-      if (!timelineMap[item._id]) {
-        timelineMap[item._id] = { date: item._id, recharges: 0, payouts: item.total };
-      } else {
-        timelineMap[item._id].payouts = item.total;
-      }
-    }
-
-    const timeline = Object.values(timelineMap).sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    res.status(200).json({
-      success: true,
-      data: {
-        rechargeSpending,
-        dailyEarnings,
-        overview: {
-          totalRevenue,
-          totalUserSpends,
-          totalMatePayout,
-          netPlatformProfit
-        },
-        recentTransactions: recentTx,
-        timeline
-      }
-    });
+    const {
+      getOverview,
+    } = require("../../services/dashboard/financials");
+    const data = await getOverview();
+    res.status(200).json({ success: true, data });
   } catch (error) {
     console.error("Financials API error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while fetching financial statistics"
+      message: "Server error while fetching financial statistics",
     });
   }
 };
 
-module.exports = { getDashboard, getFinancials };
+// @desc    Paginated wallet transactions
+// @route   GET /dashboard/financials/transactions
+const getFinancialTransactions = async (req, res) => {
+  try {
+    const { getTransactions } = require("../../services/dashboard/financials");
+    const data = await getTransactions(req.query);
+    res.status(200).json({ success: true, ...data });
+  } catch (error) {
+    console.error("Financial transactions API error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching transactions",
+    });
+  }
+};
+
+// @desc    Paginated user recharge/spend summary
+// @route   GET /dashboard/financials/users
+const getFinancialUsers = async (req, res) => {
+  try {
+    const { getUsers } = require("../../services/dashboard/financials");
+    const data = await getUsers(req.query);
+    res.status(200).json({ success: true, ...data });
+  } catch (error) {
+    console.error("Financial users API error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching user financials",
+    });
+  }
+};
+
+// @desc    Paginated mate call/chat payout sessions
+// @route   GET /dashboard/financials/sessions
+const getFinancialSessions = async (req, res) => {
+  try {
+    const { getSessions } = require("../../services/dashboard/financials");
+    const data = await getSessions(req.query);
+    res.status(200).json({ success: true, ...data });
+  } catch (error) {
+    console.error("Financial sessions API error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching session payouts",
+    });
+  }
+};
+
+module.exports = {
+  getDashboard,
+  getFinancials,
+  getFinancialTransactions,
+  getFinancialUsers,
+  getFinancialSessions,
+};

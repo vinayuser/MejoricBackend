@@ -1,9 +1,23 @@
 const Razorpay = require("../../configs/razorpay");
 const { getOrCreateWallet } = require("./getOrCreateWallet");
 const { throwError } = require("../../utils");
+const {
+  isMockPaymentsEnabled,
+  createMockOrderId,
+} = require("../../helpers/mockPayments.helper");
 
 exports.createWalletTopupOrder = async (userId, { amount, currency }) => {
-  const wallet = await getOrCreateWallet(userId);
+  await getOrCreateWallet(userId);
+
+  if (isMockPaymentsEnabled()) {
+    return {
+      razorpayOrderId: createMockOrderId("wallet"),
+      amount,
+      currency,
+      keyId: process.env.RAZORPAY_KEY_ID || "mock_key",
+      mockPayments: true,
+    };
+  }
 
   const smallestUnit = currency === "INR" ? amount * 100 : amount * 100;
 
@@ -25,5 +39,6 @@ exports.createWalletTopupOrder = async (userId, { amount, currency }) => {
     amount,
     currency,
     keyId: process.env.RAZORPAY_KEY_ID,
+    mockPayments: false,
   };
 };

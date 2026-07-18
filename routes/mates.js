@@ -10,7 +10,13 @@ const attachUserIdFromParams = (req, res, next) => {
   next();
 };
 
-router.post("/create", verifyJwtToken, isAdmin, register);
+const prepareMateCreate = (req, res, next) => {
+  req.body.role = "mate";
+  req.body.agreedToTerms = req.body.agreedToTerms ?? true;
+  next();
+};
+
+router.post("/create", verifyJwtToken, isAdmin, prepareMateCreate, register);
 router.put("/update/:id", verifyJwtToken, isAdmin, attachUserIdFromParams, updateUser);
 
 module.exports = { router, routePrefix: "/mates" };

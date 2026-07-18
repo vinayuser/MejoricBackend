@@ -40,6 +40,17 @@ const {
   registerMateSocket,
   unregisterMateSocket,
 } = require("./helpers/matePresence");
+const {
+  roomName: communityRoomName,
+  watchRoomName: communityWatchRoomName,
+  addPresence: addCommunityPresence,
+  removePresence: removeCommunityPresence,
+  removeSocketFromAll: removeCommunitySocketFromAll,
+  getOnlineCount: getCommunityOnlineCount,
+  getOnlineCounts: getCommunityOnlineCounts,
+} = require("./helpers/communityPresence");
+const CommunityMembership = require("./models/CommunityMembership");
+const { createMessage: createCommunityMessage } = require("./services/communities/postsAndMessages");
 const { sendPushNotification } = require("./helpers/notification.helper");
 
 const allowedOrigins = [
@@ -51,6 +62,14 @@ const allowedOrigins = [
   "http://localhost:6003",
   "http://localhost:5173",
 ].filter(Boolean);
+
+/** Express mount paths — nginx /staging-api/ forwards the full URI without stripping. */
+const API_MOUNT_PREFIXES = (
+  process.env.API_MOUNT_PREFIXES || "/mateandmentors,/staging-api/mateandmentors"
+)
+  .split(",")
+  .map((p) => p.trim())
+  .filter(Boolean);
 
 const app = express();
 const server = http.createServer(app);
@@ -104,6 +123,108 @@ io.on("connection", (socket) => {
   socket.on("join_admin_mate_tracking", () => {
     socket.join("admin_mate_tracking");
     console.log(`📊 Admin socket ${socket.id} joined mate tracking room`);
+  });
+
+  const broadcastCommunityOnline = (communityId) => {
+    const cid = String(communityId);
+    const payload = {
+      communityId: cid,
+      online: getCommunityOnlineCount(cid),
+    };
+    io.to(communityRoomName(cid)).emit("community_online", payload);
+    io.to(communityWatchRoomName(cid)).emit("community_online", payload);
+  };
+
+  /** Watch online counts for joined communities (sidebar). */
+  socket.on("community_watch", ({ communityIds } = {}) => {
+    const ids = Array.isArray(communityIds) ? communityIds.map(String) : [];
+    socket.communityWatchIds = socket.communityWatchIds || new Set();
+    for (const id of socket.communityWatchIds) {
+      if (!ids.includes(id)) socket.leave(communityWatchRoomName(id));
+    }
+    socket.communityWatchIds = new Set(ids);
+    for (const id of ids) {
+      socket.join(communityWatchRoomName(id));
+    }
+    socket.emit("community_online_counts", getCommunityOnlineCounts(ids));
+  });
+
+  /** Enter a community chat room (membership required). */
+  socket.on("join_community", async ({ communityId, userId } = {}) => {
+    try {
+      if (!communityId || !userId) return;
+      const cid = String(communityId);
+      const uid = String(userId);
+
+      const member = await CommunityMembership.exists({
+        userId: uid,
+        communityId: cid,
+        isDeleted: false,
+      });
+      if (!member) {
+        socket.emit("community_error", {
+          message: "Join this community to chat",
+        });
+        return;
+      }
+
+      // Leave previous community chat rooms (keep watch rooms)
+      if (socket.communityChatId && socket.communityChatId !== cid) {
+        const prev = socket.communityChatId;
+        socket.leave(communityRoomName(prev));
+        removeCommunityPresence(prev, uid, socket.id);
+        broadcastCommunityOnline(prev);
+      }
+
+      socket.join(communityRoomName(cid));
+      socket.communityChatId = cid;
+      socket.communityUserId = uid;
+      addCommunityPresence(cid, uid, socket.id);
+      broadcastCommunityOnline(cid);
+      console.log(`🏘️ User ${uid} joined community room ${cid}`);
+    } catch (err) {
+      console.error("join_community error:", err.message);
+      socket.emit("community_error", { message: "Unable to join community chat" });
+    }
+  });
+
+  socket.on("leave_community", ({ communityId, userId } = {}) => {
+    const cid = String(communityId || socket.communityChatId || "");
+    const uid = String(userId || socket.communityUserId || socket.registeredUserId || "");
+    if (!cid || !uid) return;
+    socket.leave(communityRoomName(cid));
+    if (socket.communityChatId === cid) socket.communityChatId = null;
+    removeCommunityPresence(cid, uid, socket.id);
+    broadcastCommunityOnline(cid);
+  });
+
+  /** Real-time community message — persists then broadcasts to room. */
+  socket.on("community_send_message", async (payload = {}) => {
+    try {
+      const communityId = String(payload.communityId || "");
+      const userId = String(
+        payload.userId || socket.communityUserId || socket.registeredUserId || "",
+      );
+      const text = payload.text;
+      if (!communityId || !userId || !text) return;
+
+      const message = await createCommunityMessage(userId, communityId, {
+        text,
+        isAnonymous: payload.isAnonymous === true,
+      });
+
+      // Broadcast without isMine — each client derives it from authorId
+      const { isMine: _mine, ...publicMessage } = message;
+      io.to(communityRoomName(communityId)).emit("community_new_message", {
+        communityId,
+        message: publicMessage,
+      });
+    } catch (err) {
+      console.error("community_send_message error:", err.message);
+      socket.emit("community_error", {
+        message: err.message || "Failed to send message",
+      });
+    }
   });
 
   socket.on("join_chat", async (conversationId, userId) => {
@@ -497,6 +618,15 @@ io.on("connection", (socket) => {
       unregisterMateSocket(socket.registeredUserId, socket.id);
     }
 
+    // Community presence cleanup
+    const affectedCommunities = removeCommunitySocketFromAll(socket.id, [
+      ...(socket.communityChatId ? [socket.communityChatId] : []),
+      ...(socket.communityWatchIds || []),
+    ]);
+    for (const cid of affectedCommunities) {
+      broadcastCommunityOnline(cid);
+    }
+
     const { conversationId, userId } = socket;
 
     if (conversationId) {
@@ -576,11 +706,13 @@ io.on("connection", (socket) => {
 app.set("io", io);
 
 const { zoomWebhook } = require("./controllers/bookings/zoomWebhook");
-app.post(
-  "/mateandmentors/bookings/zoom/webhook",
-  express.raw({ type: "application/json" }),
-  zoomWebhook,
-);
+for (const apiPrefix of API_MOUNT_PREFIXES) {
+  app.post(
+    `${apiPrefix}/bookings/zoom/webhook`,
+    express.raw({ type: "application/json" }),
+    zoomWebhook,
+  );
+}
 
 app.use(express.json({ limit: "1mb" }));
 app.use(fileUpload({
@@ -603,7 +735,10 @@ app.use(
   }),
 );
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
-app.use("/mateandmentors", allRoutes);
+for (const apiPrefix of API_MOUNT_PREFIXES) {
+  app.use(apiPrefix, allRoutes);
+  console.log(`✅ API mounted at ${apiPrefix}`);
+}
 
 app.get("/debug-sentry", function mainHandler(req, res) {
   throw new Error("My first Sentry error!");

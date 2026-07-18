@@ -35,7 +35,7 @@ const walletTransactionSchema = new mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ["RAZORPAY", "ADMIN", "MOCK_PAYMENT", "CALL", "CHAT"],
+      enum: ["RAZORPAY", "ADMIN", "MOCK_PAYMENT", "CALL", "CHAT", "COMMUNITY", "THERAPY"],
       default: "RAZORPAY",
       index: true,
     },

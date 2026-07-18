@@ -25,6 +25,12 @@ router.post(
 );
 
 router.post(
+    '/ring',
+    verifyJwtToken,
+    callController.ringCall
+);
+
+router.post(
     '/accept',
     verifyJwtToken,
   //  validate(callStatusSchema),

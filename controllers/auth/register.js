@@ -129,14 +129,38 @@ exports.register = asyncWrapper(async (req, res) => {
   }
 
   if (email) {
-    const existingEmailUser = await User.findOne({ email, role, isDeleted: false });
-    if (
-      existingEmailUser &&
-      String(existingEmailUser._id) !== String(guestId || "") &&
-      String(existingEmailUser._id) !== String(user?._id || "")
-    ) {
-      throwError(400, "User with this email already exists");
+    // Existing accounts: email is owned only after OTP verification (isMobileVerified).
+    const existingEmailUser = await User.findOne({
+      email,
+      role,
+      isDeleted: false,
+      isMobileVerified: true,
+    });
+    if (existingEmailUser) {
+      const isGuestConversion =
+        guestId && String(existingEmailUser._id) === String(guestId);
+      const isSameResolvedUser =
+        user && String(existingEmailUser._id) === String(user._id);
+
+      if (!isGuestConversion && !isSameResolvedUser) {
+        throwError(400, "User with this email already exists");
+      }
     }
+
+    // Free email from unverified signups so they don't block new attempts.
+    const unverifiedEmailFilter = {
+      email,
+      role,
+      isDeleted: false,
+      isMobileVerified: { $ne: true },
+    };
+    const excludeIds = [];
+    if (user?._id) excludeIds.push(user._id);
+    if (guestId) excludeIds.push(guestId);
+    if (excludeIds.length) {
+      unverifiedEmailFilter._id = { $nin: excludeIds };
+    }
+    await User.updateMany(unverifiedEmailFilter, { $unset: { email: 1 } });
   }
   if (mobile) {
     const existingMobileUser = await User.findOne({ mobile, role, isDeleted: false });
@@ -147,7 +171,7 @@ exports.register = asyncWrapper(async (req, res) => {
       if (!isGuestConversion && !isPendingSignup) {
         throwError(400, "User with mobile number already exists");
       }
-      if (isPendingSignup && !user) {
+      if ((isPendingSignup || isGuestConversion) && !user) {
         user = existingMobileUser;
       }
     }
@@ -273,6 +297,20 @@ exports.register = asyncWrapper(async (req, res) => {
     });
     responseMessage = "Mentor registered successfully";
   }
+
+  // Admin panel create (/mentors/create, /mates/create) must NOT call
+  // sendTokenResponse — that cookie would replace the admin session with
+  // the new mentor/mate JWT and look like an auto-logout.
+  const createdByAdmin = Boolean(req.userId) && (isMate || isMentor);
+  if (createdByAdmin) {
+    const userResponse = user.toObject ? user.toObject() : { ...user };
+    delete userResponse.password;
+    delete userResponse.otp;
+    delete userResponse.resetPasswordTokenHash;
+    delete userResponse.resetPasswordExpiresAt;
+    return sendSuccess(res, 201, responseMessage, { user: userResponse });
+  }
+
   return sendTokenResponse(res, 201, responseMessage, user, {
     otpSessionId,
   });

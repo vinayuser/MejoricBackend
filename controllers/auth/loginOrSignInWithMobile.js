@@ -76,14 +76,27 @@ exports.loginOrSignInWithMobile = asyncWrapper(async (req, res) => {
 
   if (!user) {
     if (email) {
+      // Only OTP-verified accounts permanently own an email.
       const emailExists = await User.findOne({
         email,
         role,
         isDeleted: false,
+        isMobileVerified: true,
       });
       if (emailExists) {
         throwError(400, "User with this email already exists");
       }
+
+      // Unverified / incomplete signups must not lock the email.
+      await User.updateMany(
+        {
+          email,
+          role,
+          isDeleted: false,
+          isMobileVerified: { $ne: true },
+        },
+        { $unset: { email: 1 } },
+      );
     }
 
     isFirst = true;
@@ -93,6 +106,7 @@ exports.loginOrSignInWithMobile = asyncWrapper(async (req, res) => {
       loginType,
       password: email || defaultPassword,
       isSignUpCompleted: false,
+      isMobileVerified: false,
       ...profileFields,
     });
   } else {
@@ -101,11 +115,23 @@ exports.loginOrSignInWithMobile = asyncWrapper(async (req, res) => {
         email,
         role,
         isDeleted: false,
+        isMobileVerified: true,
         _id: { $ne: user._id },
       });
       if (emailExists) {
         throwError(400, "User with this email already exists");
       }
+
+      await User.updateMany(
+        {
+          email,
+          role,
+          isDeleted: false,
+          isMobileVerified: { $ne: true },
+          _id: { $ne: user._id },
+        },
+        { $unset: { email: 1 } },
+      );
     }
 
     if (Object.keys(profileFields).length) {
