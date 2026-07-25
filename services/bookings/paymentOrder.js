@@ -18,13 +18,16 @@ const {
   isMockPaymentId,
   createMockOrderId,
 } = require("../../helpers/mockPayments.helper");
+const {
+  slotIdToDate,
+  slotIdToLabel,
+} = require("../../helpers/bookingSlots");
 
 const ORDER_TTL_MS = 30 * 60 * 1000;
 
 async function validateBookingPayload(payload) {
   const {
     mentorId,
-    scheduledAt,
     slotLabel,
     dateKey,
     slotId,
@@ -32,7 +35,7 @@ async function validateBookingPayload(payload) {
     guestDetails,
   } = payload;
 
-  if (!mentorId || !scheduledAt || !slotLabel || !dateKey || !slotId || !guestDetails) {
+  if (!mentorId || !dateKey || !slotId || !guestDetails) {
     throwError(422, "Incomplete booking details");
   }
 
@@ -50,8 +53,9 @@ async function validateBookingPayload(payload) {
     throwError(422, "Selected slot is not available");
   }
 
-  const startTime = new Date(scheduledAt);
-  if (Number.isNaN(startTime.getTime()) || startTime <= new Date()) {
+  // Always derive IST wall-clock from slotId — never trust client scheduledAt
+  const startTime = slotIdToDate(dateKey, slotId);
+  if (!startTime || Number.isNaN(startTime.getTime()) || startTime <= new Date()) {
     throwError(422, "Please select a future time slot");
   }
 
@@ -75,7 +79,7 @@ async function validateBookingPayload(payload) {
   return {
     mentorId,
     scheduledAt: startTime,
-    slotLabel,
+    slotLabel: slotIdToLabel(dateKey, slotId) || slotLabel,
     dateKey,
     slotId,
     sessionFormat: normalizedFormat,

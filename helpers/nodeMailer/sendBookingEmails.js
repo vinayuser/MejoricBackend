@@ -16,7 +16,14 @@ function formatSessionDateTime(scheduledAt, slotLabel) {
     year: "numeric",
     timeZone: "Asia/Kolkata",
   });
-  return `${datePart} at ${slotLabel} (IST)`;
+  const timePart = date.toLocaleTimeString("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Kolkata",
+  });
+  // Prefer time from scheduledAt (IST) so email matches stored instant
+  return `${datePart} at ${timePart || slotLabel} (IST)`;
 }
 
 function buildEmailShell({ title, subtitle, bodyHtml }) {

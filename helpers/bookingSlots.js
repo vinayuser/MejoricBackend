@@ -1,21 +1,37 @@
+const { getISTDayKey } = require("./istDate");
+
 const SLOT_START_HOUR = 9;
 const SLOT_END_HOUR = 18;
 const SLOT_INTERVAL_MINUTES = 15;
+const IST_TIMEZONE = "Asia/Kolkata";
+const IST_OFFSET = "+05:30";
 
+/** Parse YYYY-MM-DD as a calendar day (not a host-local midnight). */
 function parseDateKey(dateKey) {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  return new Date(year, month - 1, day);
+  const [year, month, day] = String(dateKey || "")
+    .split("-")
+    .map(Number);
+  if (!year || !month || !day) return null;
+  return { year, month, day };
 }
 
-function toDateKey(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+/** Today’s date key in IST (product timezone). */
+function toDateKey(date = new Date()) {
+  return getISTDayKey(date);
+}
+
+/** Wall-clock IST hour/minute on dateKey → absolute UTC Date. */
+function istWallClockToDate(dateKey, hour, minute) {
+  const hh = String(hour).padStart(2, "0");
+  const mm = String(minute).padStart(2, "0");
+  const date = new Date(`${dateKey}T${hh}:${mm}:00${IST_OFFSET}`);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
 }
 
 function formatSlotLabel(date) {
   return date.toLocaleTimeString("en-IN", {
+    timeZone: IST_TIMEZONE,
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
@@ -23,13 +39,13 @@ function formatSlotLabel(date) {
 }
 
 function buildAllSlotsForDate(dateKey) {
-  const date = parseDateKey(dateKey);
-  const slots = [];
+  if (!parseDateKey(dateKey)) return [];
 
+  const slots = [];
   for (let hour = SLOT_START_HOUR; hour < SLOT_END_HOUR; hour += 1) {
     for (let minute = 0; minute < 60; minute += SLOT_INTERVAL_MINUTES) {
-      const slotDate = new Date(date);
-      slotDate.setHours(hour, minute, 0, 0);
+      const slotDate = istWallClockToDate(dateKey, hour, minute);
+      if (!slotDate) continue;
       slots.push({
         id: `${dateKey}-${hour}-${minute}`,
         dateKey,
@@ -45,23 +61,29 @@ function buildAllSlotsForDate(dateKey) {
 }
 
 function slotIdToDate(dateKey, slotId) {
-  const parts = slotId.split("-");
+  const parts = String(slotId || "").split("-");
   if (parts.length < 5) return null;
   const hour = Number(parts[3]);
   const minute = Number(parts[4]);
   if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
-  const date = parseDateKey(dateKey);
-  date.setHours(hour, minute, 0, 0);
-  return date;
+  return istWallClockToDate(dateKey, hour, minute);
+}
+
+function slotIdToLabel(dateKey, slotId) {
+  const date = slotIdToDate(dateKey, slotId);
+  return date ? formatSlotLabel(date) : "";
 }
 
 module.exports = {
   SLOT_START_HOUR,
   SLOT_END_HOUR,
   SLOT_INTERVAL_MINUTES,
+  IST_TIMEZONE,
   parseDateKey,
   toDateKey,
   formatSlotLabel,
   buildAllSlotsForDate,
   slotIdToDate,
+  slotIdToLabel,
+  istWallClockToDate,
 };

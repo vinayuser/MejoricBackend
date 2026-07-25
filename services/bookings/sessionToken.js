@@ -10,7 +10,6 @@ const {
 } = require("../../helpers/agora.helper");
 
 const JOIN_EARLY_MS = 15 * 60 * 1000;
-const JOIN_GRACE_MS = 15 * 60 * 1000;
 
 async function assertBookingAccess(booking, userId) {
   const mentorId = booking.mentorId?._id || booking.mentorId;
@@ -33,7 +32,7 @@ async function assertBookingAccess(booking, userId) {
 }
 
 function assertJoinWindow(booking) {
-  if (!["scheduled", "in_progress"].includes(booking.status)) {
+  if (["cancelled", "no_show", "completed"].includes(booking.status)) {
     throwError(400, "This session is no longer available to join");
   }
 
@@ -41,7 +40,8 @@ function assertJoinWindow(booking) {
   const start = new Date(booking.scheduledAt).getTime();
   const durationMs = (booking.durationMinutes || 45) * 60 * 1000;
   const openAt = start - JOIN_EARLY_MS;
-  const closeAt = start + durationMs + JOIN_GRACE_MS;
+  // Join stays open for the full purchased duration until mentor marks completed
+  const closeAt = start + durationMs;
 
   if (now < openAt) {
     throwError(400, "Session room opens 15 minutes before the scheduled time");
@@ -80,6 +80,7 @@ exports.getBookingSessionToken = async (userId, bookingId) => {
 
   if (booking.status === "scheduled") {
     booking.status = "in_progress";
+    if (!booking.actualStartTime) booking.actualStartTime = new Date();
     await booking.save();
   }
 

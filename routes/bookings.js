@@ -13,6 +13,7 @@ const {
   getMyAppointments,
   getMyBookings,
   getBookingSessionToken,
+  completeBooking,
   getAdminBookings,
 } = require("../controllers/bookings");
 const { verifyJwtToken, isAdmin, optionalVerifyJwtToken } = require("../middlewares");
@@ -23,10 +24,11 @@ router.post("/verify-payment", verifyJwtToken, verifyBookingPayment);
 
 // Static "me" routes must come before :mentorId param routes
 router.get("/me", verifyJwtToken, getMyBookings);
-router.get("/:bookingId/session-token", verifyJwtToken, getBookingSessionToken);
 router.get("/mentor/me/availability", verifyJwtToken, getMyAvailability);
 router.put("/mentor/me/availability", verifyJwtToken, saveMyAvailability);
 router.get("/mentor/me/appointments", verifyJwtToken, getMyAppointments);
+router.post("/:bookingId/complete", verifyJwtToken, completeBooking);
+router.get("/:bookingId/session-token", verifyJwtToken, getBookingSessionToken);
 
 router.get("/mentor/:mentorId/booked-slots", getBookedSlots);
 router.get("/mentor/:mentorId/availability", optionalVerifyJwtToken, getPublicAvailability);

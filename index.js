@@ -718,7 +718,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use(fileUpload({
   useTempFiles: true,
   tempFileDir: "/tmp/",
-  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
 }));
 app.use(cookieParser());
 

@@ -56,6 +56,23 @@ function buildMockMeeting({ topic, startTime }) {
   };
 }
 
+/** Format Date as Asia/Kolkata wall-clock for Zoom (no Z / no offset). */
+function toZoomIstStartTime(startTime) {
+  const date = new Date(startTime);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value || "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`;
+}
+
 async function createZoomMeeting({ topic, startTime, durationMinutes = 30 }) {
   if (!isZoomConfigured()) {
     console.warn("⚠️ Zoom not configured — using mock meeting for booking");
@@ -70,7 +87,7 @@ async function createZoomMeeting({ topic, startTime, durationMinutes = 30 }) {
     {
       topic,
       type: 2,
-      start_time: startTime.toISOString(),
+      start_time: toZoomIstStartTime(startTime),
       duration: durationMinutes,
       timezone: "Asia/Kolkata",
       settings: {

@@ -17,6 +17,7 @@ const {
   saveMentorAvailability,
   getMentorAppointments,
   getUserBookings,
+  markBookingCompleted,
 } = require("../../services/bookings");
 const {
   createBookingPaymentOrder,
@@ -168,6 +169,14 @@ exports.getBookingSessionToken = asyncWrapper(async (req, res) => {
 
   const session = await getBookingSessionToken(req.userId, req.params.bookingId);
   return sendSuccess(res, 200, "Session token generated", session);
+});
+
+exports.completeBooking = asyncWrapper(async (req, res) => {
+  ensureMentor(req);
+  validateObjectId(req.params.bookingId, "Booking ID");
+
+  const booking = await markBookingCompleted(req.userId, req.params.bookingId);
+  return sendSuccess(res, 200, "Session marked as completed", booking);
 });
 
 exports.getAdminBookings = asyncWrapper(async (req, res) => {

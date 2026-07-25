@@ -13,6 +13,7 @@ const mongoose = require("mongoose");
 const {
   buildAllSlotsForDate,
   slotIdToDate,
+  slotIdToLabel,
   toDateKey,
 } = require("../../helpers/bookingSlots");
 const {
@@ -47,7 +48,7 @@ async function resolveSessionPricing(mentorId, sessionFormat) {
   };
 }
 
-async function assertSlotAvailable({ mentorId, dateKey, slotId, scheduledAt }) {
+async function assertSlotAvailable({ mentorId, dateKey, slotId }) {
   const availability = await MentorAvailability.findOne({
     mentorId,
     dateKey,
@@ -58,8 +59,9 @@ async function assertSlotAvailable({ mentorId, dateKey, slotId, scheduledAt }) {
     throwError(422, "Selected slot is not available");
   }
 
-  const startTime = new Date(scheduledAt);
-  if (Number.isNaN(startTime.getTime()) || startTime <= new Date()) {
+  // Always derive IST wall-clock from slotId — never trust client scheduledAt
+  const startTime = slotIdToDate(dateKey, slotId);
+  if (!startTime || Number.isNaN(startTime.getTime()) || startTime <= new Date()) {
     throwError(422, "Please select a future time slot");
   }
 
@@ -96,8 +98,8 @@ exports.createBooking = async ({
     mentorId,
     dateKey,
     slotId,
-    scheduledAt,
   });
+  const resolvedSlotLabel = slotIdToLabel(dateKey, slotId) || slotLabel;
 
   const topic = `Mejoric session with ${guestDetails.fullName}`;
   const bookingId = new mongoose.Types.ObjectId();
@@ -128,7 +130,7 @@ exports.createBooking = async ({
     userId: userId || undefined,
     guestDetails,
     scheduledAt: startTime,
-    slotLabel,
+    slotLabel: resolvedSlotLabel,
     dateKey,
     slotId,
     sessionFormat: pricing.sessionFormat,
@@ -342,6 +344,50 @@ exports.saveMentorAvailability = async (mentorId, dateKey, slotIds) => {
   };
 };
 
+/**
+ * Mentor marks a session completed — Join is disabled for everyone afterwards.
+ */
+exports.markBookingCompleted = async (mentorId, bookingId) => {
+  if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+    throwError(422, "Invalid booking ID");
+  }
+
+  const booking = await MentorBooking.findById(bookingId);
+  if (!booking || booking.isDeleted) {
+    throwError(404, "Booking not found");
+  }
+
+  if (String(booking.mentorId) !== String(mentorId)) {
+    throwError(403, "Only the assigned mentor can complete this session");
+  }
+
+  if (booking.status === "cancelled" || booking.status === "no_show") {
+    throwError(400, "This session cannot be marked completed");
+  }
+
+  if (booking.status === "completed") {
+    return formatMentorAppointment(booking);
+  }
+
+  const endTime = new Date();
+  booking.status = "completed";
+  booking.actualEndTime = endTime;
+  if (booking.actualStartTime) {
+    booking.actualDurationSeconds = Math.max(
+      0,
+      Math.round((endTime.getTime() - new Date(booking.actualStartTime).getTime()) / 1000),
+    );
+  } else if (booking.scheduledAt) {
+    const elapsed = Math.round(
+      (endTime.getTime() - new Date(booking.scheduledAt).getTime()) / 1000,
+    );
+    booking.actualDurationSeconds = Math.max(0, elapsed);
+  }
+
+  await booking.save();
+  return formatMentorAppointment(booking);
+};
+
 exports.getUserBookings = async (userId, { tab = "upcoming", page = 1, limit = 20 }) => {
   const user = await User.findById(userId).select("email");
   if (!user) {
@@ -361,8 +407,29 @@ exports.getUserBookings = async (userId, { tab = "upcoming", page = 1, limit = 2
   };
 
   if (tab === "upcoming") {
-    filter.status = { $in: ["scheduled", "in_progress"] };
-    filter.scheduledAt = { $gte: now };
+    // Keep booking in Upcoming until purchased session end (unless mentor completed it)
+    filter = {
+      isDeleted: false,
+      status: { $nin: ["cancelled", "no_show", "completed"] },
+      $and: [
+        { $or: identityOr },
+        {
+          $expr: {
+            $gte: [
+              {
+                $add: [
+                  "$scheduledAt",
+                  {
+                    $multiply: [{ $ifNull: ["$durationMinutes", 45] }, 60000],
+                  },
+                ],
+              },
+              now,
+            ],
+          },
+        },
+      ],
+    };
   } else {
     filter = {
       isDeleted: false,
@@ -370,10 +437,29 @@ exports.getUserBookings = async (userId, { tab = "upcoming", page = 1, limit = 2
         { $or: identityOr },
         {
           $or: [
-            { status: { $in: ["completed", "cancelled", "no_show"] } },
+            { status: { $in: ["cancelled", "no_show"] } },
             {
-              scheduledAt: { $lt: now },
-              status: { $nin: ["cancelled", "no_show"] },
+              $and: [
+                { status: { $in: ["completed", "scheduled", "in_progress"] } },
+                {
+                  $expr: {
+                    $lt: [
+                      {
+                        $add: [
+                          "$scheduledAt",
+                          {
+                            $multiply: [
+                              { $ifNull: ["$durationMinutes", 45] },
+                              60000,
+                            ],
+                          },
+                        ],
+                      },
+                      now,
+                    ],
+                  },
+                },
+              ],
             },
           ],
         },
@@ -407,14 +493,44 @@ exports.getMentorAppointments = async (mentorId, { tab = "upcoming", page = 1, l
   const filter = { mentorId, isDeleted: false };
 
   if (tab === "upcoming") {
-    filter.status = { $in: ["scheduled", "in_progress"] };
-    filter.scheduledAt = { $gte: now };
+    // Keep until purchased session end so mentor can rejoin after drops
+    filter.status = { $nin: ["cancelled", "no_show", "completed"] };
+    filter.$expr = {
+      $gte: [
+        {
+          $add: [
+            "$scheduledAt",
+            { $multiply: [{ $ifNull: ["$durationMinutes", 45] }, 60000] },
+          ],
+        },
+        now,
+      ],
+    };
   } else if (tab === "completed") {
     filter.status = { $in: ["completed", "cancelled", "no_show"] };
   } else if (tab === "past") {
     filter.$or = [
-      { status: { $in: ["completed", "cancelled", "no_show"] } },
-      { scheduledAt: { $lt: now }, status: { $nin: ["cancelled", "no_show"] } },
+      { status: { $in: ["cancelled", "no_show"] } },
+      {
+        $and: [
+          { status: { $in: ["completed", "scheduled", "in_progress"] } },
+          {
+            $expr: {
+              $lt: [
+                {
+                  $add: [
+                    "$scheduledAt",
+                    {
+                      $multiply: [{ $ifNull: ["$durationMinutes", 45] }, 60000],
+                    },
+                  ],
+                },
+                now,
+              ],
+            },
+          },
+        ],
+      },
     ];
   }
 
