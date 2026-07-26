@@ -23,7 +23,7 @@ exports.validateUpdateUser = (data) => {
       "number.max": "Mobile number must be 10 digits",
     }),
     // categoryId: objectId().messages({ "any.invalid": "Invalid categoryId" }),
-    bio: Joi.string().allow("").max(300).messages({
+    bio: Joi.string().allow("").max(5000).messages({
       "string.max": "Bio cannot exceed {#limit} characters",
     }),
     pricePerMin: Joi.number().positive().messages({

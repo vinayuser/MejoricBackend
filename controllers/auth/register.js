@@ -10,7 +10,6 @@ const { getOrCreateWallet } = require("../../services/wallet");
 const { sendSignupAgreementMail } = require("../../helpers/nodeMailer");
 const { sendOtpToMobile } = require("../../services/otp");
 const { resolveMentorDomains, normalizeDomainIds } = require("../../constants/mentorDomains");
-const { resolveMentorPrices } = require("../../helpers/mentorPricing");
 
 exports.register = asyncWrapper(async (req, res) => {
   let {
@@ -286,12 +285,13 @@ exports.register = asyncWrapper(async (req, res) => {
     responseMessage = "Mate registered successfully";
   }
   if (isMentor) {
-    const mentorPrices = resolveMentorPrices({
-      audioCallPrice,
-      videoCallPrice,
-      video60CallPrice,
-    });
-    await Mentor.create({
+    const parsePrice = (value) => {
+      if (value === undefined || value === null || value === "") return null;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return null;
+      return Math.round(n);
+    };
+    const mentorDoc = {
       userId: user._id,
       name: user.name,
       email: user.email,
@@ -305,10 +305,14 @@ exports.register = asyncWrapper(async (req, res) => {
       domains,
       domainId,
       domain,
-      audioCallPrice: mentorPrices.audioCallPrice,
-      videoCallPrice: mentorPrices.videoCallPrice,
-      video60CallPrice: mentorPrices.video60CallPrice,
-    });
+    };
+    const audio = parsePrice(audioCallPrice);
+    const video = parsePrice(videoCallPrice);
+    const video60 = parsePrice(video60CallPrice);
+    if (audio != null) mentorDoc.audioCallPrice = audio;
+    if (video != null) mentorDoc.videoCallPrice = video;
+    if (video60 != null) mentorDoc.video60CallPrice = video60;
+    await Mentor.create(mentorDoc);
     responseMessage = "Mentor registered successfully";
   }
   return sendTokenResponse(res, 201, responseMessage, user, {

@@ -6,7 +6,6 @@ const { uploadImage, deleteImage } = require("../uploads");
 const { isAdult } = require("../../helpers/users");
 const { ROLES } = require("../../constants");
 const { resolveMentorDomains, normalizeDomainIds } = require("../../constants/mentorDomains");
-const { resolveMentorPrices } = require("../../helpers/mentorPricing");
 // const { validateObjectId } = require("../../utils");
 
 exports.updateUserById = async (userId, payload, image, options = {}) => {
@@ -85,10 +84,18 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
       user.isMobileVerified = false;
     }
     if (isActive !== undefined) {
-      user.isActive = isActive;
+      user.isActive =
+        isActive === true ||
+        isActive === "true" ||
+        isActive === 1 ||
+        isActive === "1";
     }
     if (isOnline !== undefined) {
-      user.isOnline = isOnline;
+      user.isOnline =
+        isOnline === true ||
+        isOnline === "true" ||
+        isOnline === 1 ||
+        isOnline === "1";
     }
     if (isMate) {
       // if (typeof categoryId !== "undefined") {
@@ -193,35 +200,40 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
         if (typeof currentSpecs === "undefined") {
           mentorUpdate.specifications = resolvedNames;
         } else {
-          mentorUpdate.specifications = [...new Set([...resolvedNames, ...currentSpecs])];
+          mentorUpdate.specifications = [
+            ...new Set([...resolvedNames, ...currentSpecs]),
+          ];
         }
       }
-      if (
-        typeof audioCallPrice !== "undefined" ||
-        typeof videoCallPrice !== "undefined" ||
-        typeof video60CallPrice !== "undefined"
-      ) {
-        const existingMentorDoc = await Mentor.findOne({
-          userId: user._id,
-          isDeleted: false,
-        });
-        const resolved = resolveMentorPrices({
-          audioCallPrice:
-            typeof audioCallPrice !== "undefined"
-              ? audioCallPrice
-              : existingMentorDoc?.audioCallPrice,
-          videoCallPrice:
-            typeof videoCallPrice !== "undefined"
-              ? videoCallPrice
-              : existingMentorDoc?.videoCallPrice,
-          video60CallPrice:
-            typeof video60CallPrice !== "undefined"
-              ? video60CallPrice
-              : existingMentorDoc?.video60CallPrice,
-        });
-        mentorUpdate.audioCallPrice = resolved.audioCallPrice;
-        mentorUpdate.videoCallPrice = resolved.videoCallPrice;
-        mentorUpdate.video60CallPrice = resolved.video60CallPrice;
+
+      // Full slot amount as entered — no /45 or *45 conversion
+      if (typeof audioCallPrice !== "undefined" && audioCallPrice !== "") {
+        const n = Number(audioCallPrice);
+        if (!Number.isFinite(n) || n <= 0) {
+          throwError(422, "audioCallPrice must be > 0");
+        }
+        mentorUpdate.audioCallPrice = Math.round(n);
+      }
+      if (typeof videoCallPrice !== "undefined" && videoCallPrice !== "") {
+        const n = Number(videoCallPrice);
+        if (!Number.isFinite(n) || n <= 0) {
+          throwError(422, "videoCallPrice must be > 0");
+        }
+        mentorUpdate.videoCallPrice = Math.round(n);
+      }
+      if (typeof video60CallPrice !== "undefined" && video60CallPrice !== "") {
+        const n = Number(video60CallPrice);
+        if (!Number.isFinite(n) || n <= 0) {
+          throwError(422, "video60CallPrice must be > 0");
+        }
+        mentorUpdate.video60CallPrice = Math.round(n);
+      }
+      if (isActive !== undefined) {
+        mentorUpdate.isActive =
+          isActive === true ||
+          isActive === "true" ||
+          isActive === 1 ||
+          isActive === "1";
       }
     }
   }
@@ -353,6 +365,12 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
         });
       }
     }
+  }
+
+  // Return full profile (incl. mentor prices) so admin can verify the save
+  if (isMentor || isMate) {
+    const { getUserById } = require("./getUserById");
+    return getUserById(userId);
   }
 
   const { password, otp, ...userData } = user.toObject();

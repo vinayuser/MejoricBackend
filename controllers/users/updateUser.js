@@ -35,6 +35,28 @@ exports.updateUser = asyncWrapper(async (req, res) => {
     }
   });
 
+  // FormData sends everything as strings — coerce mentor/mate numeric + boolean fields
+  [
+    "audioCallPrice",
+    "videoCallPrice",
+    "video60CallPrice",
+    "pricePerMin",
+    "pricePerHour",
+    "experience",
+  ].forEach((field) => {
+    if (req.body?.[field] !== undefined && req.body[field] !== "") {
+      const n = Number(req.body[field]);
+      if (Number.isFinite(n)) req.body[field] = n;
+    }
+  });
+  ["isActive", "isAvailable", "isOnline"].forEach((field) => {
+    if (req.body?.[field] === undefined) return;
+    const v = req.body[field];
+    if (v === true || v === "true" || v === 1 || v === "1") req.body[field] = true;
+    else if (v === false || v === "false" || v === 0 || v === "0")
+      req.body[field] = false;
+  });
+
   const availabilitySource =
     req.body.availabilitySource ||
     (req.role === ROLES.ADMIN ? "admin_panel" : "mate_app");
