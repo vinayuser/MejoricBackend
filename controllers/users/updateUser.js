@@ -3,78 +3,116 @@ const { updateUserById } = require("../../services/users");
 const { validateUpdateUser } = require("../../validator/users");
 const { ROLES } = require("../../constants");
 
+// Helper functions
+const normalizeArrayField = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return value.split(",").map(s => s.trim()).filter(Boolean);
+    }
+  }
+  return [value];
+};
+
+const coerceNumberField = (value) => {
+  if (value === undefined || value === "" || value === null) return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
+
+const coerceBooleanField = (value) => {
+  if (value === undefined || value === null) return undefined;
+  const truthy = [true, "true", 1, "1"];
+  const falsy = [false, "false", 0, "0"];
+  if (truthy.includes(value)) return true;
+  if (falsy.includes(value)) return false;
+  return undefined;
+};
+
+const processFormDataFields = (body) => {
+  const result = { ...body };
+  
+  // Array fields
+  const arrayFields = ["specifications", "languages", "domainIds", "domains"];
+  arrayFields.forEach(field => {
+    if (result[field] !== undefined) {
+      result[field] = normalizeArrayField(result[field]);
+    }
+  });
+  
+  // Number fields
+  const numberFields = [
+    "audioCallPrice", "videoCallPrice", "video60CallPrice",
+    "pricePerMin", "pricePerHour", "experience"
+  ];
+  numberFields.forEach(field => {
+    if (result[field] !== undefined && result[field] !== "") {
+      const coerced = coerceNumberField(result[field]);
+      if (coerced !== undefined) result[field] = coerced;
+    }
+  });
+  
+  // Boolean fields
+  const booleanFields = ["isActive", "isAvailable", "isOnline"];
+  booleanFields.forEach(field => {
+    if (result[field] !== undefined) {
+      const coerced = coerceBooleanField(result[field]);
+      if (coerced !== undefined) result[field] = coerced;
+    }
+  });
+  
+  return result;
+};
+
 exports.updateUser = asyncWrapper(async (req, res) => {
-  const userId = req.query?.userId || req.userId;
-  console.log("DEBUG: updateUser controller reached for userId:", userId);
+  // Prefer route :id (admin mentor/mate update). Express 5 ignores req.query reassignment.
+  const userId =
+    req.targetUserId ||
+    req.params?.id ||
+    req.query?.userId ||
+    req.userId;
+  console.log("DEBUG: updateUser target userId:", String(userId), {
+    targetUserId: req.targetUserId,
+    paramsId: req.params?.id,
+    queryUserId: req.query?.userId,
+    jwtUserId: req.userId ? String(req.userId) : undefined,
+  });
   if (!userId || userId === "undefined") {
-    console.log("DEBUG: userId is missing or undefined string");
     throwError(422, "User ID is required");
   }
   validateObjectId(userId, "User ID");
+
+  // 2. Check authorization
   if (String(userId) !== String(req.userId) && req.role !== ROLES.ADMIN) {
     throwError(403, "You can only update your own profile or need admin access");
   }
 
-  // Normalize array fields that might be sent as strings via FormData
-  ["specifications", "languages", "domainIds", "domains"].forEach((field) => {
-    if (req.body && req.body[field]) {
-      if (typeof req.body[field] === "string") {
-        try {
-          const parsed = JSON.parse(req.body[field]);
-          req.body[field] = Array.isArray(parsed) ? parsed : [req.body[field]];
-        } catch (e) {
-          // If not JSON, it's likely a single value or comma-separated string
-          req.body[field] = req.body[field]
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-        }
-      } else if (!Array.isArray(req.body[field])) {
-        req.body[field] = [req.body[field]];
-      }
-    }
-  });
+  // 3. Process form data fields
+  let updateData = processFormDataFields(req.body);
 
-  // FormData sends everything as strings — coerce mentor/mate numeric + boolean fields
-  [
-    "audioCallPrice",
-    "videoCallPrice",
-    "video60CallPrice",
-    "pricePerMin",
-    "pricePerHour",
-    "experience",
-  ].forEach((field) => {
-    if (req.body?.[field] !== undefined && req.body[field] !== "") {
-      const n = Number(req.body[field]);
-      if (Number.isFinite(n)) req.body[field] = n;
-    }
-  });
-  ["isActive", "isAvailable", "isOnline"].forEach((field) => {
-    if (req.body?.[field] === undefined) return;
-    const v = req.body[field];
-    if (v === true || v === "true" || v === 1 || v === "1") req.body[field] = true;
-    else if (v === false || v === "false" || v === 0 || v === "0")
-      req.body[field] = false;
-  });
-
-  const availabilitySource =
-    req.body.availabilitySource ||
+  // 4. Handle availability source
+  const availabilitySource = updateData.availabilitySource || 
     (req.role === ROLES.ADMIN ? "admin_panel" : "mate_app");
-  if (req.body.availabilitySource !== undefined) {
-    delete req.body.availabilitySource;
+  delete updateData.availabilitySource;
+
+  // 5. Validate
+  const { error } = validateUpdateUser(updateData);
+  if (error) {
+    throwError(422, error.details.map(d => d.message).join(", "));
   }
 
-  const { error } = validateUpdateUser(req.body);
-  if (error) throwError(422, error.details.map((d) => d.message).join(", "));
-  const image = req.files?.image;
-
-  const updatedUser = await updateUserById(userId, req.body, image, {
-    availabilitySource,
-  });
-  return sendSuccess(
-    res,
-    200,
-    "User profile updated successfully",
-    updatedUser
+  // 6. Update user
+  const updatedUser = await updateUserById(
+    userId, 
+    updateData, 
+    req.files?.image, 
+    { availabilitySource }
   );
+
+  // 7. Return response
+  return sendSuccess(res, 200, "User profile updated successfully", updatedUser);
 });

@@ -5,8 +5,9 @@ const { verifyJwtToken, isAdmin } = require("../middlewares");
 
 const router = express.Router();
 
+// Express 5: req.query is a getter — reassigning it is ignored.
 const attachUserIdFromParams = (req, res, next) => {
-  req.query = { ...req.query, userId: req.params.id };
+  req.targetUserId = req.params.id;
   next();
 };
 
