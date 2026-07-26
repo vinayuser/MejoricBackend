@@ -34,6 +34,9 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
       isAvailable,
       isOnline,
       mentorType,
+      audioCallPrice,
+      videoCallPrice,
+      video60CallPrice,
     } = payload;
     if (
       typeof pricePerMin === "undefined" &&
@@ -77,10 +80,18 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
       user.isMobileVerified = false;
     }
     if (isActive !== undefined) {
-      user.isActive = isActive;
+      user.isActive =
+        isActive === true ||
+        isActive === "true" ||
+        isActive === 1 ||
+        isActive === "1";
     }
     if (isOnline !== undefined) {
-      user.isOnline = isOnline;
+      user.isOnline =
+        isOnline === true ||
+        isOnline === "true" ||
+        isOnline === 1 ||
+        isOnline === "1";
     }
     if (isMate) {
       // if (typeof categoryId !== "undefined") {
@@ -156,6 +167,35 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
           throwError(422, "mentorType must be emotional or professional");
         }
         mentorUpdate.mentorType = normalizedMentorType;
+      }
+      // Session totals for audio 45 / video 45 / video 60
+      if (typeof audioCallPrice !== "undefined" && audioCallPrice !== "") {
+        const n = Number(audioCallPrice);
+        if (!Number.isFinite(n) || n <= 0) {
+          throwError(422, "audioCallPrice must be > 0");
+        }
+        mentorUpdate.audioCallPrice = Math.round(n);
+      }
+      if (typeof videoCallPrice !== "undefined" && videoCallPrice !== "") {
+        const n = Number(videoCallPrice);
+        if (!Number.isFinite(n) || n <= 0) {
+          throwError(422, "videoCallPrice must be > 0");
+        }
+        mentorUpdate.videoCallPrice = Math.round(n);
+      }
+      if (typeof video60CallPrice !== "undefined" && video60CallPrice !== "") {
+        const n = Number(video60CallPrice);
+        if (!Number.isFinite(n) || n <= 0) {
+          throwError(422, "video60CallPrice must be > 0");
+        }
+        mentorUpdate.video60CallPrice = Math.round(n);
+      }
+      if (isActive !== undefined) {
+        mentorUpdate.isActive =
+          isActive === true ||
+          isActive === "true" ||
+          isActive === 1 ||
+          isActive === "1";
       }
     }
   }
@@ -287,6 +327,12 @@ exports.updateUserById = async (userId, payload, image, options = {}) => {
         });
       }
     }
+  }
+
+  // Return full profile (incl. mentor prices) so admin can verify the save
+  if (isMentor || isMate) {
+    const { getUserById } = require("./getUserById");
+    return getUserById(userId);
   }
 
   const { password, otp, ...userData } = user.toObject();

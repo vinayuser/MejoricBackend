@@ -23,7 +23,7 @@ exports.validateUpdateUser = (data) => {
       "number.max": "Mobile number must be 10 digits",
     }),
     // categoryId: objectId().messages({ "any.invalid": "Invalid categoryId" }),
-    bio: Joi.string().allow("").max(300).messages({
+    bio: Joi.string().allow("").max(5000).messages({
       "string.max": "Bio cannot exceed {#limit} characters",
     }),
     pricePerMin: Joi.number().positive().messages({
@@ -65,6 +65,18 @@ exports.validateUpdateUser = (data) => {
       .messages({
         "any.only": "mentorType must be emotional or professional",
       }),
+    audioCallPrice: Joi.number().positive().messages({
+      "number.base": "audioCallPrice must be numeric",
+      "number.positive": "audioCallPrice must be > 0",
+    }),
+    videoCallPrice: Joi.number().positive().messages({
+      "number.base": "videoCallPrice must be numeric",
+      "number.positive": "videoCallPrice must be > 0",
+    }),
+    video60CallPrice: Joi.number().positive().messages({
+      "number.base": "video60CallPrice must be numeric",
+      "number.positive": "video60CallPrice must be > 0",
+    }),
   }).unknown(true);
   return schema.validate(data, { abortEarly: false, stripUnknown: true });
 };

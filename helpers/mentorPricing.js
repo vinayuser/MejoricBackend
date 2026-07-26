@@ -1,5 +1,5 @@
-const DEFAULT_AUDIO_PRICE_PER_MIN = 12;
-const DEFAULT_VIDEO_PRICE_PER_MIN = 15;
+const DEFAULT_AUDIO_SESSION_45 = 540;
+const DEFAULT_VIDEO_SESSION_45 = 675;
 
 const FORMAT_DURATIONS = {
   audio: 45,
@@ -7,24 +7,26 @@ const FORMAT_DURATIONS = {
   video60: 60,
 };
 
-function normalizePrice(value, fallback) {
+/**
+ * Prices are the full amount for that slot (e.g. 20 = ₹20 for 45 min).
+ * No per-minute conversion or duration multiplication.
+ */
+function toSessionTotal(value, fallback) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return fallback;
-  // Legacy session totals stored before per-minute pricing
-  if (num > 100) return Math.max(1, Math.round(num / 45));
   return Math.round(num);
 }
 
-function resolveMentorPrices(mentorDoc = {}) {
-  const videoCallPrice = normalizePrice(
+function resolveMentorSessionPrices(mentorDoc = {}) {
+  const videoCallPrice = toSessionTotal(
     mentorDoc.videoCallPrice,
-    DEFAULT_VIDEO_PRICE_PER_MIN,
+    DEFAULT_VIDEO_SESSION_45,
   );
-  const audioCallPrice = normalizePrice(
+  const audioCallPrice = toSessionTotal(
     mentorDoc.audioCallPrice,
-    DEFAULT_AUDIO_PRICE_PER_MIN,
+    DEFAULT_AUDIO_SESSION_45,
   );
-  const video60CallPrice = normalizePrice(
+  const video60CallPrice = toSessionTotal(
     mentorDoc.video60CallPrice,
     videoCallPrice,
   );
@@ -32,21 +34,22 @@ function resolveMentorPrices(mentorDoc = {}) {
   return { audioCallPrice, videoCallPrice, video60CallPrice };
 }
 
-function getMentorPricePerMin(mentorDoc, sessionFormat = "video") {
-  const prices = resolveMentorPrices(mentorDoc);
-  if (sessionFormat === "audio") return prices.audioCallPrice;
-  if (sessionFormat === "video60") return prices.video60CallPrice;
-  return prices.videoCallPrice;
-}
-
 function getMentorSessionDuration(sessionFormat = "video") {
   return FORMAT_DURATIONS[sessionFormat] || FORMAT_DURATIONS.video;
 }
 
 function getMentorSessionPrice(mentorDoc, sessionFormat = "video") {
-  const perMin = getMentorPricePerMin(mentorDoc, sessionFormat);
+  const prices = resolveMentorSessionPrices(mentorDoc);
+  if (sessionFormat === "audio") return prices.audioCallPrice;
+  if (sessionFormat === "video60") return prices.video60CallPrice;
+  return prices.videoCallPrice;
+}
+
+/** @deprecated kept for callers that still ask for per-min; derived from session total */
+function getMentorPricePerMin(mentorDoc, sessionFormat = "video") {
+  const session = getMentorSessionPrice(mentorDoc, sessionFormat);
   const duration = getMentorSessionDuration(sessionFormat);
-  return perMin * duration;
+  return Math.max(1, Math.round(session / duration));
 }
 
 function isValidSessionFormat(format) {
@@ -54,10 +57,13 @@ function isValidSessionFormat(format) {
 }
 
 module.exports = {
-  DEFAULT_AUDIO_PRICE_PER_MIN,
-  DEFAULT_VIDEO_PRICE_PER_MIN,
+  DEFAULT_AUDIO_SESSION_45,
+  DEFAULT_VIDEO_SESSION_45,
+  DEFAULT_AUDIO_PRICE_PER_MIN: 12,
+  DEFAULT_VIDEO_PRICE_PER_MIN: 15,
   FORMAT_DURATIONS,
-  resolveMentorPrices,
+  resolveMentorPrices: resolveMentorSessionPrices,
+  resolveMentorSessionPrices,
   getMentorPricePerMin,
   getMentorSessionPrice,
   getMentorSessionDuration,

@@ -22,9 +22,10 @@ const mentorSchema = new mongoose.Schema(
       enum: ["emotional", "professional"],
       index: true,
     },
-    audioCallPrice: { type: Number, default: 12, index: true },
-    videoCallPrice: { type: Number, default: 15, index: true },
-    video60CallPrice: { type: Number, default: 15, index: true },
+    // Full session amount for the slot (not per-minute)
+    audioCallPrice: { type: Number, default: 0, index: true },
+    videoCallPrice: { type: Number, default: 0, index: true },
+    video60CallPrice: { type: Number, default: 0, index: true },
     isActive: { type: Boolean, default: true },
     isDeleted: { type: Boolean, default: false, index: true },
   },
