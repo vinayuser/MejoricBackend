@@ -134,13 +134,15 @@ exports.loginOrSignInWithMobile = asyncWrapper(async (req, res) => {
       );
     }
 
+    // Attach mobile + profile onto guest before OTP (in-chat / signup conversion)
+    user.mobile = Number(mobile);
     if (Object.keys(profileFields).length) {
       Object.assign(user, profileFields);
       if (email && !user.password) {
         user.password = email;
       }
-      await user.save();
     }
+    await user.save();
   }
 
   const otpData = await sendOtpToMobile(mobile);

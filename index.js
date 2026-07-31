@@ -120,6 +120,37 @@ io.on("connection", (socket) => {
     console.log(`📡 User ${uid} registered for private notifications`);
   });
 
+  /** Mate asks guest to register — persist so guest cannot chat until converted */
+  socket.on("ask_signup", async (payload = {}) => {
+    const conversationId = payload.conversationId || socket.conversationId;
+    const guestUserId = payload.guestUserId;
+    const data = {
+      event: "ASK_SIGNUP",
+      conversationId,
+      fromMate: true,
+      forceSignup: true,
+      message:
+        payload.message ||
+        "Your mate invited you to create an account to continue chatting.",
+    };
+    if (guestUserId && mongoose.Types.ObjectId.isValid(guestUserId)) {
+      try {
+        await User.updateOne(
+          { _id: guestUserId, role: ROLES.GUEST, isDeleted: false },
+          { $set: { forceSignupBeforeChat: true } },
+        );
+      } catch (err) {
+        console.error("Failed to set forceSignupBeforeChat:", err.message);
+      }
+    }
+    if (conversationId) {
+      io.to(conversationId).emit("ask_signup", data);
+    }
+    if (guestUserId) {
+      io.to(`user_${guestUserId}`).emit("ask_signup", data);
+    }
+  });
+
   socket.on("join_admin_mate_tracking", () => {
     socket.join("admin_mate_tracking");
     console.log(`📊 Admin socket ${socket.id} joined mate tracking room`);

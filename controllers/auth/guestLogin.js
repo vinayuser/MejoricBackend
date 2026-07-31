@@ -1,41 +1,63 @@
 const User = require("../../models/User");
 const { ROLES, LOGIN_TYPES } = require("../../constants");
-const { asyncWrapper, sendSuccess, throwError, sendTokenResponse } = require("../../utils");
+const {
+  asyncWrapper,
+  sendSuccess,
+  throwError,
+  sendTokenResponse,
+} = require("../../utils");
+const {
+  getClientIp,
+  guestDisplayName,
+  looksLikeIpAddress,
+} = require("../../helpers/clientIp");
 
+/**
+ * Find-or-create a guest for this IP.
+ * Display name is "Guest ####" for mates; IP is stored only on ipAddress for tracking.
+ */
 exports.guestLogin = asyncWrapper(async (req, res) => {
   const { fcmToken } = req.body;
+  const clientIp = getClientIp(req);
 
-  // Securely extract the client IP address (handling proxies or local fallbacks)
-  let clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || req.ip;
-  if (Array.isArray(clientIp)) {
-    clientIp = clientIp[0];
-  }
-  if (typeof clientIp === "string" && clientIp.includes(",")) {
-    clientIp = clientIp.split(",")[0].trim();
-  }
-  if (typeof clientIp === "string" && clientIp.startsWith("::ffff:")) {
-    clientIp = clientIp.substring(7);
-  }
-
-  // Check if a guest account has already been registered from this IP address
-  const existingGuest = await User.findOne({
+  // Prefer an active guest account for this IP (resume chat identity)
+  let guest = await User.findOne({
     ipAddress: clientIp,
-    createdAsGuest: true,
+    role: ROLES.GUEST,
     isDeleted: false,
   });
 
-  if (existingGuest) {
+  if (guest) {
+    // Replace legacy IP-as-name so mates never see the IP
+    if (looksLikeIpAddress(guest.name) || !guest.name) {
+      guest.name = guestDisplayName();
+    }
+    guest.isLoggedIn = true;
+    guest.isOnline = true;
+    if (fcmToken) guest.fcmToken = fcmToken;
+    await guest.save();
+    return sendTokenResponse(res, 200, "Guest session resumed", guest);
+  }
+
+  // Former guest from this IP already registered — do not create another guest
+  const converted = await User.findOne({
+    ipAddress: clientIp,
+    createdAsGuest: true,
+    role: { $ne: ROLES.GUEST },
+    isDeleted: false,
+  });
+  if (converted) {
     throwError(403, "Please register or login to continue.");
   }
 
-  // Generate a random guest user with minimal details
-  const guestId = Math.floor(1000 + Math.random() * 9000);
-  const guestName = `Guest ${guestId}`;
-  const guestEmail = `guest_${guestId}_${Date.now()}@mejoric.com`;
-  const guestPassword = Math.random().toString(36).slice(-8);
+  const displayName = guestDisplayName();
+  const guestEmail = `guest_${Buffer.from(clientIp)
+    .toString("hex")
+    .slice(0, 24)}_${Date.now()}@mejoric.com`;
+  const guestPassword = Math.random().toString(36).slice(-10);
 
-  const userData = {
-    name: guestName,
+  guest = await User.create({
+    name: displayName,
     email: guestEmail,
     password: guestPassword,
     role: ROLES.GUEST,
@@ -46,10 +68,7 @@ exports.guestLogin = asyncWrapper(async (req, res) => {
     isSignUpCompleted: false,
     ipAddress: clientIp,
     createdAsGuest: true,
-  };
+  });
 
-  // Create minimal guest user (NO wallet). Guest gets 3 min free chat only.
-  const user = await User.create(userData);
-
-  return sendTokenResponse(res, 201, "Guest login successful", user);
+  return sendTokenResponse(res, 201, "Guest login successful", guest);
 });

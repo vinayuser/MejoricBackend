@@ -15,6 +15,7 @@ const {
   resetPassword,
   checkGuestLimit,
   checkSignupTrial,
+  convertGuest,
 } = require("../controllers/auth");
 
 router.post("/register", register);
@@ -25,6 +26,7 @@ router.post("/loginOrSignin-with-email", loginOrSignInWithEmail);
 router.put("/verify-otp-email", verifyOtpWithEmail);
 router.post("/loginOrSignin-with-mobile", loginOrSignInWithMobile);
 router.put("/verify-otp-mobile", verifyOtpWithMobile);
+router.post("/convert-guest", verifyJwtToken, convertGuest);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
 router.get("/check-guest-limit", checkGuestLimit);
