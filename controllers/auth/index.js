@@ -8,6 +8,7 @@ const { forgotPassword } = require("./forgotPassword");
 const { resetPassword } = require("./resetPassword");
 const { logout } = require("./logout");
 const { guestLogin } = require("./guestLogin");
+const { convertGuest } = require("./convertGuest");
 const { checkGuestLimit } = require("./checkGuestLimit");
 const { checkSignupTrial } = require("./checkSignupTrial");
 
@@ -16,6 +17,7 @@ module.exports = {
   login,
   logout,
   guestLogin,
+  convertGuest,
   loginOrSignInWithEmail,
   verifyOtpWithEmail,
   loginOrSignInWithMobile,

@@ -8,6 +8,16 @@ const { sendPushNotification } = require("../helpers/notification.helper");
 const { processChatBilling } = require("../helpers/chatBilling.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
+const { looksLikeIpAddress } = require("../helpers/clientIp");
+
+/** Name shown to mates — never expose guest IP. */
+function publicSenderName(user) {
+  const name = user?.name?.trim();
+  if (!name || looksLikeIpAddress(name)) {
+    return user?.role === ROLES.GUEST ? "Guest" : "User";
+  }
+  return name;
+}
 
 const sendMessage = async (req, res, next) => {
   try {
@@ -37,6 +47,13 @@ const sendMessage = async (req, res, next) => {
       return throwError(404, "Recipient not found");
     }
 
+    if (sender.role === ROLES.GUEST && sender.forceSignupBeforeChat) {
+      return throwError(
+        403,
+        "Please create an account to continue chatting. Your mate has asked you to register.",
+      );
+    }
+
     if (sender.role === ROLES.USER) {
       const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
       const balance = wallet?.balances?.INR ?? 0;
@@ -60,7 +77,7 @@ const sendMessage = async (req, res, next) => {
     // Save to DB with explicit casting to avoid any Mongoose version issues
     const message = await Message.create({
       senderId: new mongoose.Types.ObjectId(senderId.toString()),
-      senderName: sender.name || "User",
+      senderName: publicSenderName(sender),
       recipientId: new mongoose.Types.ObjectId(recipientId.toString()),
       text,
       conversationId,
@@ -126,7 +143,7 @@ const sendMessage = async (req, res, next) => {
       io.to(message.conversationId).emit("new_message", {
         _id: message._id,
         senderId: senderId.toString(),
-        senderName: sender.name || "User",
+        senderName: publicSenderName(sender),
         text,
         timestamp: message.timestamp,
         conversationId: message.conversationId,
@@ -171,6 +188,13 @@ const initiateChat = async (req, res, next) => {
       }
     }
 
+    if (sender.role === ROLES.GUEST && sender.forceSignupBeforeChat) {
+      return throwError(
+        403,
+        "Please create an account to continue chatting. Your mate has asked you to register.",
+      );
+    }
+
     if (sender.role === ROLES.GUEST) {
       const clientIp = sender.ipAddress;
       const guestUsersFromIp = await User.find({
@@ -210,12 +234,12 @@ const initiateChat = async (req, res, next) => {
         userId: recipientId,
         fcmToken: recipient.fcmToken,
         title: "New Chat Request",
-        body: `${sender.name || "Someone"} wants to chat with you.`,
+        body: `${publicSenderName(sender)} wants to chat with you.`,
         type: "CHAT_INITIATED",
         data: {
           event: "CHAT_INITIATED",
           senderId: senderId.toString(),
-          senderName: sender.name || "User",
+          senderName: publicSenderName(sender),
           senderRole: sender.role,
         },
       });
@@ -227,7 +251,7 @@ const initiateChat = async (req, res, next) => {
       io.to(`user_${recipientId}`).emit("notification", {
         type: "CHAT_INITIATED",
         senderId: senderId.toString(),
-        senderName: sender.name || "User",
+        senderName: publicSenderName(sender),
         senderRole: sender.role,
         text: "wants to chat with you",
         timestamp: Date.now().toString(),
