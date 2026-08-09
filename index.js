@@ -23,10 +23,15 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const { mongoDb } = require("./database/mongoDb");
-const { errorHandler } = require("./middlewares");
+const { errorHandler, blockBlockedIp } = require("./middlewares");
 const { throwError } = require("./utils");
 const allRoutes = require("./routes");
 const { startBookingReminderJob, stopBookingReminderJob } = require("./jobs/bookingReminders");
+const { getIpFromSocket } = require("./helpers/clientIp");
+const {
+  isIpBlocked,
+  refreshBlockedIpCache,
+} = require("./helpers/blockedIpCache");
 
 // Models and Constants
 const User = require("./models/User");
@@ -72,6 +77,7 @@ const API_MOUNT_PREFIXES = (
   .filter(Boolean);
 
 const app = express();
+app.set("trust proxy", true);
 const server = http.createServer(app);
 
 // Initialize Socket.io
@@ -93,18 +99,58 @@ const {
   getTimeLeftAfterRecharge,
 } = require("./helpers/chatPricing.helper");
 
-io.on("connection", (socket) => {
+io.on("connection", async (socket) => {
   console.log("🔌 New socket connection:", socket.id);
+
+  try {
+    const socketIp = getIpFromSocket(socket);
+    if (await isIpBlocked(socketIp)) {
+      console.log(`🚫 Blocked IP socket rejected: ${socketIp}`);
+      socket.emit("force_logout", {
+        reason: "blocked",
+        message: "Your access to this platform has been blocked.",
+      });
+      socket.disconnect(true);
+      return;
+    }
+    socket.clientIp = socketIp;
+  } catch (err) {
+    console.warn("Socket IP block check failed:", err.message);
+  }
 
   socket.on("register_user", async (userId) => {
     if (!userId) return;
+
+    try {
+      const socketIp = socket.clientIp || getIpFromSocket(socket);
+      if (await isIpBlocked(socketIp)) {
+        socket.emit("force_logout", {
+          reason: "blocked",
+          message: "Your access to this platform has been blocked.",
+        });
+        socket.disconnect(true);
+        return;
+      }
+    } catch (err) {
+      console.warn("register_user IP block check failed:", err.message);
+    }
 
     const uid = String(userId);
     socket.join(`user_${uid}`);
     socket.registeredUserId = uid;
 
     try {
-      const registeredUser = await User.findById(uid).select("role").lean();
+      const registeredUser = await User.findById(uid)
+        .select("role isActive")
+        .lean();
+      if (registeredUser?.isActive === false) {
+        socket.emit("force_logout", {
+          reason: "blocked",
+          message: "Your access to this platform has been blocked.",
+        });
+        socket.disconnect(true);
+        return;
+      }
       if (
         registeredUser &&
         (registeredUser.role === ROLES.MATE ||
@@ -766,6 +812,8 @@ app.use(
   }),
 );
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+// Reject blocked IPs before any API route (Cloudflare is edge; this is the app gate)
+app.use(blockBlockedIp);
 for (const apiPrefix of API_MOUNT_PREFIXES) {
   app.use(apiPrefix, allRoutes);
   console.log(`✅ API mounted at ${apiPrefix}`);
@@ -783,13 +831,19 @@ Sentry.setupExpressErrorHandler(app);
 
 app.use(errorHandler);
 
-// MongoDb
-mongoDb();
-
-// mongoose.connection.once("open", () => {
-//   console.log("✅ Mejoric MongoDb connection established");
-//   backfillChatSessions(); // Run backfill for old messages
-// });
+// MongoDb + blocked IP cache
+mongoDb()
+  .then(async () => {
+    try {
+      const count = await refreshBlockedIpCache();
+      console.log(`🚫 Blocked IP cache loaded (${count} active)`);
+    } catch (err) {
+      console.error("Failed to load blocked IP cache:", err.message);
+    }
+  })
+  .catch((err) => {
+    console.error("Mongo init failed:", err?.message || err);
+  });
 
 const PORT =
   process.env.PORT || (process.env.APP_ENV === "local" ? 6002 : 3002);

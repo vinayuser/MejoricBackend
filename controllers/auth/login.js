@@ -6,11 +6,22 @@ const {
   throwError,
   sendTokenResponse,
 } = require("../../utils");
+const { getClientIp } = require("../../helpers/clientIp");
+const { isIpBlocked } = require("../../helpers/blockedIpCache");
 
 exports.login = asyncWrapper(async (req, res) => {
   let { email, password, role, fcmToken, type, loginType, mobile } = req.body;
   role = role?.toLowerCase() || ROLES.USER;
   loginType = loginType?.toLowerCase() || LOGIN_TYPES.PASSWORD;
+
+  const clientIp = getClientIp(req);
+  if (await isIpBlocked(clientIp)) {
+    throwError(
+      403,
+      "Access denied. Your access to this platform has been blocked.",
+    );
+  }
+
   let user;
   if (type === LOGIN_TYPES.EMAIL) {
     if (!email) throwError(422, "Email is required");
@@ -48,7 +59,11 @@ exports.login = asyncWrapper(async (req, res) => {
   }
   const passwordMatch = await user.matchPassword(password);
   if (!passwordMatch) throwError(401, "Wrong password");
+  if (user.isActive === false) {
+    throwError(403, "Access denied. Your account has been blocked.");
+  }
   if (fcmToken) user.fcmToken = fcmToken;
+  if (clientIp) user.ipAddress = clientIp;
   user = await user.save();
   return sendTokenResponse(res, 200, "User logged in successfully", user);
 });

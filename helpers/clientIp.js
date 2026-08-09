@@ -1,22 +1,65 @@
 /**
- * Resolve client IP behind proxies (x-forwarded-for) and strip IPv6-mapped prefixes.
+ * Resolve client IP behind Cloudflare / proxies.
+ * Prefer CF-Connecting-IP, then first X-Forwarded-For hop, then socket IP.
  */
-function getClientIp(req) {
-  let clientIp =
-    req.headers["x-forwarded-for"] || req.socket?.remoteAddress || req.ip;
+function normalizeIp(raw) {
+  let clientIp = raw;
   if (Array.isArray(clientIp)) {
     clientIp = clientIp[0];
   }
   if (typeof clientIp === "string" && clientIp.includes(",")) {
     clientIp = clientIp.split(",")[0].trim();
   }
-  if (typeof clientIp === "string" && clientIp.startsWith("::ffff:")) {
+  if (typeof clientIp !== "string") {
+    clientIp = clientIp == null ? "" : String(clientIp);
+  }
+  clientIp = clientIp.trim();
+  if (clientIp.startsWith("::ffff:")) {
     clientIp = clientIp.substring(7);
   }
-  if (!clientIp || clientIp === "::1") {
+  // Normalize all loopback forms to 127.0.0.1 so block checks match
+  if (
+    !clientIp ||
+    clientIp === "::1" ||
+    clientIp === "0:0:0:0:0:0:0:1" ||
+    clientIp === "localhost"
+  ) {
     clientIp = "127.0.0.1";
   }
-  return String(clientIp).trim();
+  return clientIp;
+}
+
+function getClientIp(req) {
+  const headers = req?.headers || {};
+  const raw =
+    headers["cf-connecting-ip"] ||
+    headers["CF-Connecting-IP"] ||
+    headers["x-real-ip"] ||
+    headers["x-forwarded-for"] ||
+    req?.socket?.remoteAddress ||
+    req?.connection?.remoteAddress ||
+    req?.ip;
+  return normalizeIp(raw);
+}
+
+function getIpFromSocket(socket) {
+  return getClientIp({
+    headers: socket?.handshake?.headers || {},
+    socket: socket?.conn,
+    connection: socket?.conn,
+    ip: socket?.handshake?.address,
+  });
+}
+
+/** Loopback / RFC1918 — skip Cloudflare edge rules (still enforce in-app). */
+function isPrivateOrLocalIp(ip) {
+  const s = normalizeIp(ip);
+  if (!s) return true;
+  if (s === "127.0.0.1" || s === "0.0.0.0") return true;
+  if (s.startsWith("10.")) return true;
+  if (s.startsWith("192.168.")) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(s)) return true;
+  return false;
 }
 
 /** Friendly guest display name for mates (never show raw IP). */
@@ -36,6 +79,9 @@ function looksLikeIpAddress(name) {
 
 module.exports = {
   getClientIp,
+  getIpFromSocket,
+  normalizeIp,
+  isPrivateOrLocalIp,
   guestDisplayName,
   guestDisplayNameFromIp: guestDisplayName,
   looksLikeIpAddress,

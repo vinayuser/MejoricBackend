@@ -11,6 +11,7 @@ const {
   guestDisplayName,
   looksLikeIpAddress,
 } = require("../../helpers/clientIp");
+const { isIpBlocked } = require("../../helpers/blockedIpCache");
 
 /**
  * Find-or-create a guest for this IP.
@@ -20,6 +21,13 @@ exports.guestLogin = asyncWrapper(async (req, res) => {
   const { fcmToken } = req.body;
   const clientIp = getClientIp(req);
 
+  if (await isIpBlocked(clientIp)) {
+    throwError(
+      403,
+      "Access denied. Your access to this platform has been blocked.",
+    );
+  }
+
   // Prefer an active guest account for this IP (resume chat identity)
   let guest = await User.findOne({
     ipAddress: clientIp,
@@ -28,6 +36,12 @@ exports.guestLogin = asyncWrapper(async (req, res) => {
   });
 
   if (guest) {
+    if (guest.isActive === false) {
+      throwError(
+        403,
+        "Access denied. Your access to this platform has been blocked.",
+      );
+    }
     // Replace legacy IP-as-name so mates never see the IP
     if (looksLikeIpAddress(guest.name) || !guest.name) {
       guest.name = guestDisplayName();

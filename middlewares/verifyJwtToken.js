@@ -2,6 +2,8 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const { getUserById } = require("../services/users");
 const { throwError, asyncWrapper } = require("../utils");
+const { getClientIp } = require("../helpers/clientIp");
+const User = require("../models/User");
 
 exports.verifyJwtToken = asyncWrapper(async (req, res, next) => {
   let token;
@@ -34,6 +36,20 @@ exports.verifyJwtToken = asyncWrapper(async (req, res, next) => {
   if (!decodedToken) throwError(403, "Access Denied! Invalid token");
   const user = await getUserById(decodedToken?.id);
   if (!user) throwError(404, "Access Denied! User not found");
+  if (user.isActive === false) {
+    throwError(403, "Access denied. Your account has been blocked.");
+  }
+
+  // Snapshot latest client IP for moderation (mates can block registered users)
+  const ip = getClientIp(req);
+  if (ip && user.ipAddress !== ip) {
+    user.ipAddress = ip;
+    User.updateOne({ _id: user._id }, { $set: { ipAddress: ip } }).catch(
+      (err) =>
+        console.warn("[verifyJwtToken] IP snapshot failed:", err.message),
+    );
+  }
+
   req.userId = user._id;
   req.role = user.role;
   req.user = user;

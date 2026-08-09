@@ -152,6 +152,7 @@ const initiateCall = async (req, res, next) => {
         referenceId: callSession._id,
         data: {
           callSessionId: callSession._id.toString(),
+          callerId: callerId.toString(),
           callerName: callerDisplayName,
           callType: callType,
           roomId: channelName,
@@ -164,6 +165,7 @@ const initiateCall = async (req, res, next) => {
         io.to(`user_${receiverId}`).emit("notification", {
           type: "INCOMING_CALL",
           callSessionId: callSession._id.toString(),
+          callerId: callerId.toString(),
           callerName: callerDisplayName,
           callType: callType,
           roomId: channelName,
@@ -253,6 +255,7 @@ const ringCall = async (req, res, next) => {
       referenceId: callSession._id,
       data: {
         callSessionId: callSession._id.toString(),
+        callerId: callerId.toString(),
         callerName: callerDisplayName,
         callType: callSession.callType,
         roomId: callSession.roomId,
@@ -265,6 +268,7 @@ const ringCall = async (req, res, next) => {
       io.to(`user_${receiver._id}`).emit("notification", {
         type: "INCOMING_CALL",
         callSessionId: callSession._id.toString(),
+        callerId: callerId.toString(),
         callerName: callerDisplayName,
         callType: callSession.callType,
         roomId: callSession.roomId,
@@ -348,6 +352,9 @@ const acceptCall = async (req, res, next) => {
         await mate.save();
       }
     }
+    const callerUserId =
+      callSession.callerId?._id || callSession.callerId || null;
+
     return res.status(200).json({
       success: true,
       message: "Call accepted",
@@ -357,6 +364,11 @@ const acceptCall = async (req, res, next) => {
         receiverToken: receiverAgora.token,
         agora: receiverAgora,
         callType: callSession.callType.toLowerCase(),
+        callerId: callerUserId ? String(callerUserId) : null,
+        callerName:
+          callSession.callerName ||
+          callSession.callerId?.name ||
+          null,
       },
     });
   } catch (error) {
@@ -658,6 +670,8 @@ const getPendingIncoming = async (req, res, next) => {
       session.callerName?.trim() ||
       getUserDisplayName(session.callerId, "User");
 
+    const callerUserId = session.callerId?._id || session.callerId || null;
+
     return res.status(200).json({
       success: true,
       data: {
@@ -666,6 +680,7 @@ const getPendingIncoming = async (req, res, next) => {
         callSessionId: session._id.toString(),
         callType: session.callType,
         roomId: session.roomId != null ? String(session.roomId) : "",
+        callerId: callerUserId ? String(callerUserId) : null,
         callerName,
       },
     });

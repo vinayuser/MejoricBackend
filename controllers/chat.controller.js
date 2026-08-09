@@ -35,7 +35,7 @@ const sendMessage = async (req, res, next) => {
       );
       return throwError(400, "Valid recipientId and text are required.");
     }
-
+    console.log(senderId , "senderId")
     const sender = await User.findById(senderId);
     const recipient = await User.findById(recipientId);
 
