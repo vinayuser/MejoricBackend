@@ -74,6 +74,12 @@ const userSchema = new mongoose.Schema(
     city: { type: String, trim: true },
     /** When the 10-min post-signup free chat window starts (guest→user keeps old createdAt). */
     signupChatTrialStartedAt: { type: Date },
+    /** Linked corporate account — billing uses company minute pools, not wallet. */
+    corporateId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Corporate",
+      default: null,
+    },
   },
   { timestamps: true, versionKey: false },
 );

@@ -1,16 +1,16 @@
-const nodemailer = require("nodemailer");
+const { createMailTransporter, getMailCredentials } = require("./createTransporter");
 
 exports.sendLoginOtpMail = (email, otp) => {
-  let transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.NODEMAILER_EMAIL,
-      pass: process.env.NODEMAILER_PASSWORD,
-    },
-    tls: { rejectUnauthorized: false },
-  });
+  const transporter = createMailTransporter();
+  const { user } = getMailCredentials();
+  if (!transporter) {
+    return Promise.reject(
+      new Error("NODEMAILER_EMAIL / NODEMAILER_PASSWORD are missing in Server/.env"),
+    );
+  }
+
   const mailOptions = {
-    from: process.env.NODEMAILER_EMAIL,
+    from: user,
     to: email,
     subject: "Your One-Time Password (OTP)",
     html: `
@@ -36,12 +36,15 @@ exports.sendLoginOtpMail = (email, otp) => {
       </div>
     `,
   };
-  transporter.sendMail(mailOptions, function (error, info) {
-    if (error) {
-      console.error("Error sending email:", error);
-      return { error: error };
-    } else {
-      return { success: true, message: info.response };
-    }
+
+  return new Promise((resolve, reject) => {
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.error("Error sending email:", error);
+        reject(error);
+      } else {
+        resolve({ success: true, message: info.response });
+      }
+    });
   });
 };

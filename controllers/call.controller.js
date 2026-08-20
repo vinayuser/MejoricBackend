@@ -14,6 +14,12 @@ const { sendPushNotification } = require("../helpers/notification.helper");
 const { getUserDisplayName, resolveCallOtherPartyName } = require("../helpers/userDisplayName.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
+const {
+  getCorporateForUser,
+  getRemainingMinutes,
+  deductCorporateMinutes,
+} = require("../helpers/corporateBilling.helper");
+const { logCorporateUsage } = require("../services/corporate/billing");
 
 const MINIMUM_BALANCE_REQUIRED_FOR_AUDIO_CALL = parseInt(process.env.AUDIO_CALL_PRICE_PER_MIN) || 12;
 const MINIMUM_BALANCE_REQUIRED_FOR_VIDEO_CALL = parseInt(process.env.VIDEO_CALL_PRICE_PER_MIN) || 15;
@@ -32,7 +38,7 @@ const initiateCall = async (req, res, next) => {
       );
     }
 
-    if (caller?.role === ROLES.USER) {
+    if (caller?.role === ROLES.USER && !caller?.corporateId) {
       const WalletTransaction = require("../models/WalletTransaction");
       const hasRecharged = await WalletTransaction.exists({
         userId: callerId,
@@ -48,6 +54,25 @@ const initiateCall = async (req, res, next) => {
       }
     }
 
+    let remainingMinutes = 0;
+    let isCorporateCaller = Boolean(caller?.corporateId);
+    let corporateAccount = null;
+
+    if (isCorporateCaller) {
+      corporateAccount = await getCorporateForUser(callerId);
+      if (!corporateAccount) {
+        return throwError(403, "Corporate account not found or inactive.");
+      }
+      const minuteType = callType === "AUDIO" ? "audio" : "video";
+      const corporateRemaining = getRemainingMinutes(corporateAccount, minuteType);
+      if (corporateRemaining < 1) {
+        return throwError(
+          400,
+          `Insufficient ${minuteType} minutes remaining on your corporate plan.`,
+        );
+      }
+      remainingMinutes = corporateRemaining;
+    } else {
     // Must match GET /wallet (getWallet): only active wallets count toward balance.
     const wallet = await Wallet.findOne({
       userId: callerId,
@@ -70,6 +95,9 @@ const initiateCall = async (req, res, next) => {
         `Minimum wallet balance of ${minimumBalanceRequired} Rs is required to initiate a call.`,
       );
     }
+    remainingMinutes = Math.floor(wallet.balances?.INR / minimumBalanceRequired);
+    }
+
     const receiver = await User.findById(receiverId);
     if (!receiver) return throwError(404, "Receiver not found");
     const receiverMate = await Mate.findOne({ userId: receiverId });
@@ -104,8 +132,11 @@ const initiateCall = async (req, res, next) => {
       );
     }
 
-    let remainingMinutes = 0;
-    remainingMinutes = Math.floor(wallet.balances?.INR / minimumBalanceRequired);
+    const callChargePerMin = isCorporateCaller
+      ? 0
+      : callType === "AUDIO"
+        ? MINIMUM_BALANCE_REQUIRED_FOR_AUDIO_CALL
+        : MINIMUM_BALANCE_REQUIRED_FOR_VIDEO_CALL;
 
     const callerDisplayName = getUserDisplayName(caller);
     const receiverDisplayName = getUserDisplayName(receiver, "Mentor");
@@ -115,7 +146,7 @@ const initiateCall = async (req, res, next) => {
       receiverId,
       callType,
       callStatus: "INITIATED",
-      callChargePerMin: minimumBalanceRequired,
+      callChargePerMin: callChargePerMin,
       callerName: caller.name?.trim() || callerDisplayName,
       callerEmail: caller.email?.trim() || "",
       receiverName: receiver.name?.trim() || receiverDisplayName,
@@ -476,9 +507,37 @@ const endCall = async (req, res, next) => {
       const totalAmount = diffMinutes * callSession.callChargePerMin;
       callSession.totalAmountDeducted = totalAmount;
 
-      // Deduct from caller and credit to receiver
-      if (totalAmount > 0) {
-        const callerUser = await User.findById(callSession.callerId);
+      const callerUser = await User.findById(callSession.callerId);
+      const isCorporateCall = Boolean(callerUser?.corporateId);
+
+      if (isCorporateCall && diffMinutes > 0) {
+        const minuteType =
+          callSession.callType === "AUDIO" ? "audio" : "video";
+        const updated = await deductCorporateMinutes(
+          callerUser.corporateId,
+          minuteType,
+          diffMinutes,
+        );
+        if (!updated) {
+          console.warn(
+            `[Calls] Corporate minute deduction failed for caller ${callSession.callerId}`,
+          );
+        } else {
+          await logCorporateUsage({
+            corporateId: callerUser.corporateId,
+            userId: callSession.callerId,
+            usageType: minuteType,
+            minutesUsed: diffMinutes,
+            source: "call",
+            referenceId: String(callSession._id),
+            metadata: {
+              callType: callSession.callType,
+              durationSeconds: diffSeconds,
+            },
+          });
+        }
+        callSession.totalAmountDeducted = 0;
+      } else if (totalAmount > 0) {
         const receiverUser = await User.findById(callSession.receiverId);
 
         // 1. Deduct from caller
