@@ -21,7 +21,7 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Uploads / temp
-uploads/
+# Uploads / temp (root only — keep services/uploads in git)
+/uploads/
 tmp/
 temp/

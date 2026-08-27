@@ -111,7 +111,7 @@ jobs:
             set -euo pipefail
 
             if [ "$DEPLOY_ENV" = "staging" ]; then
-              SERVER_APP_DIR="${SERVER_APP_DIR:-/var/www/html/mejoric/Server-staging}"
+              SERVER_APP_DIR="${SERVER_APP_DIR:-/var/www/html/mejoric/Server-dev}"
               PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-index-staging}"
               PORT="${PORT:-3007}"
               API_MOUNT_PREFIXES="${API_MOUNT_PREFIXES:-/staging-api/mateandmentors,/mateandmentors}"
@@ -122,7 +122,7 @@ jobs:
               APP_BASE_URL="${APP_BASE_URL:-https://dev.mejoric.com}"
             else
               SERVER_APP_DIR="${SERVER_APP_DIR:-/var/www/html/mejoric/Server}"
-              PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-index}"
+              PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-server}"
               PORT="${PORT:-3002}"
               API_MOUNT_PREFIXES="${API_MOUNT_PREFIXES:-/mateandmentors,/staging-api/mateandmentors}"
               IS_STAGING="${IS_STAGING:-false}"
