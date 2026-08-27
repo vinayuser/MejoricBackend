@@ -63,6 +63,8 @@ const allowedOrigins = [
   process.env.WEB_BASE_URL,
   process.env.ADMIN_BASE_URL,
   process.env.APP_BASE_URL,
+  process.env.CORPORATE_BASE_URL,
+  "https://corporate.mejoric.com",
   "http://localhost:6001",
   "http://localhost:6003",
   "http://localhost:5173",
