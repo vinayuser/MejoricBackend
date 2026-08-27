@@ -8,6 +8,10 @@
     "start": "node index",
     "seed:communities": "node scripts/seedCommunities.js",
     "seed:therapy": "node scripts/seedTherapy.js",
+    "loadtest:prepare": "node loadtest/prepare.js",
+    "loadtest:calls": "node loadtest/run-calls.js",
+    "loadtest:sockets": "node loadtest/run-sockets.js",
+    "loadtest:cleanup": "node loadtest/cleanup.js",
     "check-sessions": "node scratch/check_sessions.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -43,6 +47,7 @@
     "nodemon": "^3.1.11",
     "razorpay": "^2.9.6",
     "socket.io": "^4.7.2",
+    "socket.io-client": "^4.7.2",
     "validator": "^13.15.23"
   }
 }

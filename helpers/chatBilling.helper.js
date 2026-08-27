@@ -6,6 +6,10 @@ const {
   getChatChargeForSeconds,
   formatChatDuration,
 } = require("./chatPricing.helper");
+const {
+  deductCorporateMinutes,
+} = require("./corporateBilling.helper");
+const { logCorporateUsage } = require("../services/corporate/billing");
 
 /**
  * Calculate and process chat session billing.
@@ -38,16 +42,36 @@ async function processChatBilling(session, conversationId) {
 
   const effectivePrice = session.pricePerMin > 0 ? session.pricePerMin : pricePerMin;
 
-  if (billableDuration > 0 && effectivePrice > 0) {
+  const dbSession = await ChatSession.findOne({
+    conversationId,
+    status: "ACTIVE",
+  });
+
+  if (
+    session.billingMode === "corporate" &&
+    billableDuration > 0 &&
+    session.corporateId
+  ) {
+    const chatMinutes = Math.ceil(billableDuration / 60);
+    const updated = await deductCorporateMinutes(session.corporateId, "chat", chatMinutes);
+    if (updated) {
+      await logCorporateUsage({
+        corporateId: session.corporateId,
+        userId: session.payerId || dbSession?.senderId,
+        usageType: "chat",
+        minutesUsed: chatMinutes,
+        source: "chat",
+        referenceId: conversationId,
+        metadata: { billableDuration, messageCount: dbSession?.messageCount },
+      });
+    }
+    totalAmountDeducted = 0;
+  } else if (billableDuration > 0 && effectivePrice > 0) {
     totalAmountDeducted = getChatChargeForSeconds(
       billableDuration,
       effectivePrice,
     );
 
-    const dbSession = await ChatSession.findOne({
-      conversationId,
-      status: "ACTIVE",
-    });
     const payerId =
       session.payerId || (dbSession ? dbSession.senderId : null);
 

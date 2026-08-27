@@ -1,18 +1,24 @@
 const nodemailer = require("nodemailer");
 
+function getMailCredentials() {
+  const user = String(process.env.NODEMAILER_EMAIL || "")
+    .split("#")[0]
+    .trim();
+  const pass = String(process.env.NODEMAILER_PASSWORD || "")
+    .split("#")[0]
+    .trim();
+  return { user, pass };
+}
+
 function createMailTransporter() {
-  if (!process.env.NODEMAILER_EMAIL || !process.env.NODEMAILER_PASSWORD) {
-    return null;
-  }
+  const { user, pass } = getMailCredentials();
+  if (!user || !pass) return null;
 
   return nodemailer.createTransport({
     service: "gmail",
-    auth: {
-      user: process.env.NODEMAILER_EMAIL,
-      pass: process.env.NODEMAILER_PASSWORD,
-    },
+    auth: { user, pass },
     tls: { rejectUnauthorized: false },
   });
 }
 
-module.exports = { createMailTransporter };
+module.exports = { createMailTransporter, getMailCredentials };

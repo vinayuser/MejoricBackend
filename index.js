@@ -40,6 +40,10 @@ const Mate = require("./models/Mate");
 const ChatSession = require("./models/ChatSession");
 // const backfillChatSessions = require("./backfill");
 const { ROLES } = require("./constants");
+const {
+  getCorporateForUser,
+  getRemainingMinutes,
+} = require("./helpers/corporateBilling.helper");
 const { setIO } = require("./helpers/socket");
 const {
   registerMateSocket,
@@ -65,6 +69,9 @@ const allowedOrigins = [
   process.env.APP_BASE_URL,
   process.env.CORPORATE_BASE_URL,
   "https://corporate.mejoric.com",
+  "https://admin.mejoric.com",
+  "https://admin-dev.mejoric.com",
+  "https://dev.mejoric.com",
   "http://localhost:6001",
   "http://localhost:6003",
   "http://localhost:5173",
@@ -333,6 +340,8 @@ io.on("connection", async (socket) => {
       let sessionTrialDuration;
       let sessionPayerId;
       let sessionPayerBalance;
+      let sessionCorporateId;
+      let sessionBillingMode;
 
       // If it's a new session, calculate duration
       if (!session) {
@@ -349,6 +358,27 @@ io.on("connection", async (socket) => {
             const price = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
 
             if (payer.role === ROLES.USER) {
+              const corporateAccount = payer.corporateId
+                ? await getCorporateForUser(payer._id)
+                : null;
+
+              if (corporateAccount) {
+                const chatMinutesRemaining = getRemainingMinutes(
+                  corporateAccount,
+                  "chat",
+                );
+                duration = chatMinutesRemaining * 60;
+                activePrice = 0;
+                sessionTrialDuration = 0;
+                sessionPayerId = payer._id;
+                sessionPayerBalance = 0;
+                sessionCorporateId = corporateAccount._id;
+                sessionBillingMode = "corporate";
+
+                console.log(
+                  `[Timer] Corporate payer: ${payer.name}, chatMinutes=${chatMinutesRemaining}, duration=${duration}s`,
+                );
+              } else {
               const mate = await Mate.findOne({ userId: mateUser._id });
               const wallet = await Wallet.findOne({
                 userId: payer._id,
@@ -368,6 +398,7 @@ io.on("connection", async (socket) => {
                 console.log(
                   `[Timer] Wallet payer: ${payer.name}, balance=${balance}, price=${price}/min, duration=${duration}s`,
                 );
+              }
               }
             } else if (payer.role === ROLES.GUEST) {
               let trialDuration = parseInt(process.env.TRIAL_CHAT_DURATION) || 180;
@@ -420,6 +451,8 @@ io.on("connection", async (socket) => {
           trialDuration: typeof sessionTrialDuration !== "undefined" ? sessionTrialDuration : 0,
           payerId: sessionPayerId || null,
           initialBalance: typeof sessionPayerBalance !== "undefined" ? sessionPayerBalance : 0,
+          corporateId: sessionCorporateId || null,
+          billingMode: sessionBillingMode || "wallet",
         };
         activeSessions.set(conversationId, session);
 
@@ -492,7 +525,9 @@ io.on("connection", async (socket) => {
 
               activeSessions.delete(conversationId);
               const endedMessage =
-                session.pricePerMin > 0
+                session.billingMode === "corporate"
+                  ? "Your corporate chat minutes have been used up."
+                  : session.pricePerMin > 0
                   ? "Your wallet balance has run out. Please recharge to continue chatting."
                   : "Your free guest chat time has ended. Please sign up and recharge to continue.";
               io.to(conversationId).emit("session_ended", {
