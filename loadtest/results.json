@@ -1,0 +1,95 @@
+{
+  "finishedAt": "2026-08-27T04:32:23.837Z",
+  "durationMs": 66,
+  "pairs": 3,
+  "concurrency": 3,
+  "success": 0,
+  "failed": 3,
+  "successRate": "0.0%",
+  "timings": {
+    "initiate": {
+      "label": "initiate",
+      "count": 3,
+      "minMs": 19,
+      "maxMs": 64,
+      "avgMs": 35,
+      "p50Ms": 21,
+      "p95Ms": 64,
+      "p99Ms": 64
+    },
+    "accept": {
+      "label": "accept",
+      "count": 0
+    },
+    "end": {
+      "label": "end",
+      "count": 0
+    },
+    "total": {
+      "label": "total",
+      "count": 3,
+      "minMs": 19,
+      "maxMs": 64,
+      "avgMs": 35,
+      "p50Ms": 21,
+      "p95Ms": 64,
+      "p99Ms": 64
+    }
+  },
+  "errors": {
+    "initiate: connect ECONNREFUSED 127.0.0.1:3002": 3
+  },
+  "samples": [
+    {
+      "pair": 1,
+      "ok": false,
+      "errors": [
+        "initiate: connect ECONNREFUSED 127.0.0.1:3002"
+      ],
+      "timings": {
+        "initiate": [
+          64
+        ],
+        "accept": [],
+        "end": [],
+        "total": [
+          64
+        ]
+      }
+    },
+    {
+      "pair": 2,
+      "ok": false,
+      "errors": [
+        "initiate: connect ECONNREFUSED 127.0.0.1:3002"
+      ],
+      "timings": {
+        "initiate": [
+          21
+        ],
+        "accept": [],
+        "end": [],
+        "total": [
+          21
+        ]
+      }
+    },
+    {
+      "pair": 3,
+      "ok": false,
+      "errors": [
+        "initiate: connect ECONNREFUSED 127.0.0.1:3002"
+      ],
+      "timings": {
+        "initiate": [
+          19
+        ],
+        "accept": [],
+        "end": [],
+        "total": [
+          19
+        ]
+      }
+    }
+  ]
+}

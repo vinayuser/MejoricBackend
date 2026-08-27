@@ -1,0 +1,35 @@
+{
+  "createdAt": "2026-08-27T04:32:17.723Z",
+  "pairCount": 3,
+  "apiBaseUrl": "http://localhost:3002/mateandmentors",
+  "callType": "AUDIO",
+  "pairs": [
+    {
+      "index": 1,
+      "callerId": "6a8fbdcfe4bd5305a5681666",
+      "mateUserId": "6a8fbdd0e4bd5305a5681667",
+      "callerEmail": "loadtest-caller-0001@loadtest.mejoric.local",
+      "mateEmail": "loadtest-mate-0001@loadtest.mejoric.local",
+      "callerToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhOGZiZGNmZTRiZDUzMDVhNTY4MTY2NiIsInJvbGUiOiJ1c2VyIiwibmFtZSI6IkxvYWRUZXN0IENhbGxlciAwMDAxIiwiZW1haWwiOiJsb2FkdGVzdC1jYWxsZXItMDAwMUBsb2FkdGVzdC5tZWpvcmljLmxvY2FsIiwiaWF0IjoxNzg3ODA1MTM2LCJleHAiOjE3ODg0MDk5MzZ9.QG4X-zpzpmscCJ8C2YUhGLu35v4OBDDbknSPmfzEumQ",
+      "mateToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhOGZiZGQwZTRiZDUzMDVhNTY4MTY2NyIsInJvbGUiOiJtYXRlIiwibmFtZSI6IkxvYWRUZXN0IE1hdGUgMDAwMSIsImVtYWlsIjoibG9hZHRlc3QtbWF0ZS0wMDAxQGxvYWR0ZXN0Lm1lam9yaWMubG9jYWwiLCJpYXQiOjE3ODc4MDUxMzYsImV4cCI6MTc4ODQwOTkzNn0.UTF4CdL-O7-2SMPLYIAjfy57E6SQq25bW3e74Q1Cadk"
+    },
+    {
+      "index": 2,
+      "callerId": "6a8fbdd0e4bd5305a568166b",
+      "mateUserId": "6a8fbdd0e4bd5305a568166c",
+      "callerEmail": "loadtest-caller-0002@loadtest.mejoric.local",
+      "mateEmail": "loadtest-mate-0002@loadtest.mejoric.local",
+      "callerToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhOGZiZGQwZTRiZDUzMDVhNTY4MTY2YiIsInJvbGUiOiJ1c2VyIiwibmFtZSI6IkxvYWRUZXN0IENhbGxlciAwMDAyIiwiZW1haWwiOiJsb2FkdGVzdC1jYWxsZXItMDAwMkBsb2FkdGVzdC5tZWpvcmljLmxvY2FsIiwiaWF0IjoxNzg3ODA1MTM3LCJleHAiOjE3ODg0MDk5Mzd9.5RsHsJ20BssyrwaWz0z6eUHM7uOq96RpKY9e9yAP6QE",
+      "mateToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhOGZiZGQwZTRiZDUzMDVhNTY4MTY2YyIsInJvbGUiOiJtYXRlIiwibmFtZSI6IkxvYWRUZXN0IE1hdGUgMDAwMiIsImVtYWlsIjoibG9hZHRlc3QtbWF0ZS0wMDAyQGxvYWR0ZXN0Lm1lam9yaWMubG9jYWwiLCJpYXQiOjE3ODc4MDUxMzcsImV4cCI6MTc4ODQwOTkzN30.cZKZO7UlheWDxPyB5CVE46Bep2U8sAqMTosYnj3jHrU"
+    },
+    {
+      "index": 3,
+      "callerId": "6a8fbdd1e4bd5305a5681670",
+      "mateUserId": "6a8fbdd1e4bd5305a5681671",
+      "callerEmail": "loadtest-caller-0003@loadtest.mejoric.local",
+      "mateEmail": "loadtest-mate-0003@loadtest.mejoric.local",
+      "callerToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhOGZiZGQxZTRiZDUzMDVhNTY4MTY3MCIsInJvbGUiOiJ1c2VyIiwibmFtZSI6IkxvYWRUZXN0IENhbGxlciAwMDAzIiwiZW1haWwiOiJsb2FkdGVzdC1jYWxsZXItMDAwM0Bsb2FkdGVzdC5tZWpvcmljLmxvY2FsIiwiaWF0IjoxNzg3ODA1MTM3LCJleHAiOjE3ODg0MDk5Mzd9.HyqH4ZeREcfluREejvXTPZhe5V5XDE6ZCONeRAREIjs",
+      "mateToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhOGZiZGQxZTRiZDUzMDVhNTY4MTY3MSIsInJvbGUiOiJtYXRlIiwibmFtZSI6IkxvYWRUZXN0IE1hdGUgMDAwMyIsImVtYWlsIjoibG9hZHRlc3QtbWF0ZS0wMDAzQGxvYWR0ZXN0Lm1lam9yaWMubG9jYWwiLCJpYXQiOjE3ODc4MDUxMzcsImV4cCI6MTc4ODQwOTkzN30.QgvR1pM0BzO0LAITU4b6Twc0XxnIUpUT_olZxrUyQh0"
+    }
+  ]
+}

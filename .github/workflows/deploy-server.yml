@@ -1,0 +1,260 @@
+name: Deploy API (Server)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Git branch to checkout and pull on the server"
+        required: true
+        default: "main"
+        type: string
+      environment:
+        description: "GitHub Environment (SSH + Server secrets)"
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: deploy-server-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Server ${{ inputs.branch }} → ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      BRANCH: ${{ inputs.branch }}
+      DEPLOY_ENV: ${{ inputs.environment }}
+      SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+      PM2_PROCESS_NAME: ${{ secrets.PM2_PROCESS_NAME }}
+      PORT: ${{ secrets.PORT }}
+      NODE_ENV: ${{ secrets.NODE_ENV }}
+      APP_ENV: ${{ secrets.APP_ENV }}
+      APP_NAME: ${{ secrets.APP_NAME }}
+      IS_STAGING: ${{ secrets.IS_STAGING }}
+      ALLOW_MOCK_PAYMENTS: ${{ secrets.ALLOW_MOCK_PAYMENTS }}
+      MONGO_URL: ${{ secrets.MONGO_URL }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      DEFAULT_PASSWORD: ${{ secrets.DEFAULT_PASSWORD }}
+      TWO_FACTOR_API_KEY: ${{ secrets.TWO_FACTOR_API_KEY }}
+      TWO_FACTOR_SENDER_ID: ${{ secrets.TWO_FACTOR_SENDER_ID }}
+      NODEMAILER_EMAIL: ${{ secrets.NODEMAILER_EMAIL }}
+      NODEMAILER_PASSWORD: ${{ secrets.NODEMAILER_PASSWORD }}
+      CLOUD_NAME: ${{ secrets.CLOUD_NAME }}
+      CLOUD_API_KEY: ${{ secrets.CLOUD_API_KEY }}
+      CLOUD_SECRET: ${{ secrets.CLOUD_SECRET }}
+      CLOUD_BASE_URL: ${{ secrets.CLOUD_BASE_URL }}
+      CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+      AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
+      AGORA_APP_CERTIFICATE: ${{ secrets.AGORA_APP_CERTIFICATE }}
+      AGORA_TOKEN_TTL_SECONDS: ${{ secrets.AGORA_TOKEN_TTL_SECONDS }}
+      FIREBASE_SERVICE_ACCOUNT_PATH: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PATH }}
+      WEB_BASE_URL: ${{ secrets.WEB_BASE_URL }}
+      ADMIN_BASE_URL: ${{ secrets.ADMIN_BASE_URL }}
+      APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+      FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+      FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+      API_MOUNT_PREFIXES: ${{ secrets.API_MOUNT_PREFIXES }}
+      TRIAL_CHAT_DURATION: ${{ secrets.TRIAL_CHAT_DURATION }}
+      FREE_WALLET_RECHARGE: ${{ secrets.FREE_WALLET_RECHARGE }}
+      CHAT_PRICE_PER_MIN: ${{ secrets.CHAT_PRICE_PER_MIN }}
+      AUDIO_CALL_PRICE_PER_MIN: ${{ secrets.AUDIO_CALL_PRICE_PER_MIN }}
+      VIDEO_CALL_PRICE_PER_MIN: ${{ secrets.VIDEO_CALL_PRICE_PER_MIN }}
+      MATE_SHARE_PERCENTAGE: ${{ secrets.MATE_SHARE_PERCENTAGE }}
+      PLATFORM_FEE_PERCENTAGE: ${{ secrets.PLATFORM_FEE_PERCENTAGE }}
+      COMMUNITY_UNLOCK_AMOUNT: ${{ secrets.COMMUNITY_UNLOCK_AMOUNT }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      ZOOM_ACCOUNT_ID: ${{ secrets.ZOOM_ACCOUNT_ID }}
+      ZOOM_CLIENT_ID: ${{ secrets.ZOOM_CLIENT_ID }}
+      ZOOM_CLIENT_SECRET: ${{ secrets.ZOOM_CLIENT_SECRET }}
+      ZOOM_USER_ID: ${{ secrets.ZOOM_USER_ID }}
+      ZOOM_WEBHOOK_SECRET_TOKEN: ${{ secrets.ZOOM_WEBHOOK_SECRET_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      ENABLE_X_APP_KEY: ${{ secrets.ENABLE_X_APP_KEY }}
+      ENABLE_X_APP_ID: ${{ secrets.ENABLE_X_APP_ID }}
+      ENABLE_X_AUDIO_APP_ID: ${{ secrets.ENABLE_X_AUDIO_APP_ID }}
+      ENABLE_X_AUDIO_APP_KEY: ${{ secrets.ENABLE_X_AUDIO_APP_KEY }}
+    steps:
+      - name: Check required secrets
+        run: |
+          missing=""
+          [ -z "${{ secrets.SSH_HOST }}" ] && missing="$missing SSH_HOST"
+          [ -z "${{ secrets.SSH_USER }}" ] && missing="$missing SSH_USER"
+          [ -z "${{ secrets.SSH_PASSWORD }}" ] && missing="$missing SSH_PASSWORD"
+          [ -z "${{ secrets.MONGO_URL }}" ] && missing="$missing MONGO_URL"
+          [ -z "${{ secrets.JWT_SECRET }}" ] && missing="$missing JWT_SECRET"
+          if [ -n "$missing" ]; then
+            echo "Missing secrets on environment '${{ inputs.environment }}':$missing"
+            echo "Add them under Settings → Environments → ${{ inputs.environment }} → Environment secrets"
+            exit 1
+          fi
+
+      - name: Deploy over SSH (${{ inputs.environment }})
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          command_timeout: 20m
+          script_stop: true
+          allenvs: true
+          envs: BRANCH,DEPLOY_ENV,SERVER_APP_DIR,PM2_PROCESS_NAME,PORT,NODE_ENV,APP_ENV,APP_NAME,IS_STAGING,ALLOW_MOCK_PAYMENTS,MONGO_URL,JWT_SECRET,DEFAULT_PASSWORD,TWO_FACTOR_API_KEY,TWO_FACTOR_SENDER_ID,NODEMAILER_EMAIL,NODEMAILER_PASSWORD,CLOUD_NAME,CLOUD_API_KEY,CLOUD_SECRET,CLOUD_BASE_URL,CLOUDINARY_URL,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,AGORA_APP_ID,AGORA_APP_CERTIFICATE,AGORA_TOKEN_TTL_SECONDS,FIREBASE_SERVICE_ACCOUNT_PATH,WEB_BASE_URL,ADMIN_BASE_URL,APP_BASE_URL,FRONTEND_BASE_URL,FRONTEND_URL,API_MOUNT_PREFIXES,TRIAL_CHAT_DURATION,FREE_WALLET_RECHARGE,CHAT_PRICE_PER_MIN,AUDIO_CALL_PRICE_PER_MIN,VIDEO_CALL_PRICE_PER_MIN,MATE_SHARE_PERCENTAGE,PLATFORM_FEE_PERCENTAGE,COMMUNITY_UNLOCK_AMOUNT,SENTRY_DSN,ZOOM_ACCOUNT_ID,ZOOM_CLIENT_ID,ZOOM_CLIENT_SECRET,ZOOM_USER_ID,ZOOM_WEBHOOK_SECRET_TOKEN,CLOUDFLARE_API_TOKEN,CLOUDFLARE_ZONE_ID,ENABLE_X_APP_KEY,ENABLE_X_APP_ID,ENABLE_X_AUDIO_APP_ID,ENABLE_X_AUDIO_APP_KEY
+          script: |
+            set -euo pipefail
+
+            if [ "$DEPLOY_ENV" = "staging" ]; then
+              SERVER_APP_DIR="${SERVER_APP_DIR:-/var/www/html/mejoric/Server-staging}"
+              PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-index-staging}"
+              PORT="${PORT:-3007}"
+              API_MOUNT_PREFIXES="${API_MOUNT_PREFIXES:-/staging-api/mateandmentors,/mateandmentors}"
+              IS_STAGING="${IS_STAGING:-true}"
+              ALLOW_MOCK_PAYMENTS="${ALLOW_MOCK_PAYMENTS:-true}"
+              FRONTEND_BASE_URL="${FRONTEND_BASE_URL:-https://dev.mejoric.com}"
+              WEB_BASE_URL="${WEB_BASE_URL:-https://dev.mejoric.com}"
+              APP_BASE_URL="${APP_BASE_URL:-https://dev.mejoric.com}"
+            else
+              SERVER_APP_DIR="${SERVER_APP_DIR:-/var/www/html/mejoric/Server}"
+              PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-index}"
+              PORT="${PORT:-3002}"
+              API_MOUNT_PREFIXES="${API_MOUNT_PREFIXES:-/mateandmentors,/staging-api/mateandmentors}"
+              IS_STAGING="${IS_STAGING:-false}"
+              ALLOW_MOCK_PAYMENTS="${ALLOW_MOCK_PAYMENTS:-false}"
+              FRONTEND_BASE_URL="${FRONTEND_BASE_URL:-https://mejoric.com}"
+              WEB_BASE_URL="${WEB_BASE_URL:-https://mejoric.com}"
+              APP_BASE_URL="${APP_BASE_URL:-https://mejoric.com}"
+            fi
+
+            NODE_ENV="${NODE_ENV:-production}"
+            APP_ENV="${APP_ENV:-production}"
+            APP_NAME="${APP_NAME:-Mejoric}"
+            ADMIN_BASE_URL="${ADMIN_BASE_URL:-https://admin.mejoric.com}"
+            FIREBASE_SERVICE_ACCOUNT_PATH="${FIREBASE_SERVICE_ACCOUNT_PATH:-../firebaseServiceKeys.json}"
+            AGORA_TOKEN_TTL_SECONDS="${AGORA_TOKEN_TTL_SECONDS:-3600}"
+            TRIAL_CHAT_DURATION="${TRIAL_CHAT_DURATION:-600}"
+            FREE_WALLET_RECHARGE="${FREE_WALLET_RECHARGE:-500}"
+            CHAT_PRICE_PER_MIN="${CHAT_PRICE_PER_MIN:-8}"
+            AUDIO_CALL_PRICE_PER_MIN="${AUDIO_CALL_PRICE_PER_MIN:-12}"
+            VIDEO_CALL_PRICE_PER_MIN="${VIDEO_CALL_PRICE_PER_MIN:-15}"
+            MATE_SHARE_PERCENTAGE="${MATE_SHARE_PERCENTAGE:-60}"
+            PLATFORM_FEE_PERCENTAGE="${PLATFORM_FEE_PERCENTAGE:-40}"
+            COMMUNITY_UNLOCK_AMOUNT="${COMMUNITY_UNLOCK_AMOUNT:-100}"
+            ZOOM_USER_ID="${ZOOM_USER_ID:-me}"
+
+            export NVM_DIR="$HOME/.nvm"
+            if [ -s "$NVM_DIR/nvm.sh" ]; then
+              . "$NVM_DIR/nvm.sh"
+            fi
+            export PATH="/usr/local/bin:/usr/bin:$PATH"
+
+            echo "==> Environment:  $DEPLOY_ENV"
+            echo "==> Branch:       $BRANCH"
+            echo "==> Server dir:   $SERVER_APP_DIR"
+            echo "==> PM2 process:  $PM2_PROCESS_NAME"
+            echo "==> PORT:         $PORT"
+            echo "==> IS_STAGING:   $IS_STAGING"
+
+            if [ ! -d "$SERVER_APP_DIR/.git" ] || [ ! -f "$SERVER_APP_DIR/package.json" ]; then
+              echo "SERVER_APP_DIR is not a Server clone: $SERVER_APP_DIR"
+              exit 1
+            fi
+
+            cd "$SERVER_APP_DIR"
+
+            git fetch origin "$BRANCH"
+            if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+              git checkout "$BRANCH"
+            else
+              git checkout -b "$BRANCH" --track "origin/$BRANCH"
+            fi
+            git pull origin "$BRANCH"
+
+            echo "==> Writing .env from GitHub Environment secrets"
+            {
+              echo "PORT=${PORT}"
+              echo "NODE_ENV=${NODE_ENV}"
+              echo "APP_ENV=${APP_ENV}"
+              echo "APP_NAME=${APP_NAME}"
+              echo "IS_STAGING=${IS_STAGING}"
+              echo "ALLOW_MOCK_PAYMENTS=${ALLOW_MOCK_PAYMENTS}"
+              echo "MONGO_URL=${MONGO_URL}"
+              echo "JWT_SECRET=${JWT_SECRET}"
+              echo "DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}"
+              echo "TWO_FACTOR_API_KEY=${TWO_FACTOR_API_KEY:-}"
+              echo "TWO_FACTOR_SENDER_ID=${TWO_FACTOR_SENDER_ID:-}"
+              echo "NODEMAILER_EMAIL=${NODEMAILER_EMAIL:-}"
+              echo "NODEMAILER_PASSWORD=${NODEMAILER_PASSWORD:-}"
+              echo "CLOUD_NAME=${CLOUD_NAME:-}"
+              echo "CLOUD_API_KEY=${CLOUD_API_KEY:-}"
+              echo "CLOUD_SECRET=${CLOUD_SECRET:-}"
+              echo "CLOUD_BASE_URL=${CLOUD_BASE_URL:-}"
+              echo "CLOUDINARY_URL=${CLOUDINARY_URL:-}"
+              echo "RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-}"
+              echo "RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-}"
+              echo "RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET:-}"
+              echo "AGORA_APP_ID=${AGORA_APP_ID:-}"
+              echo "AGORA_APP_CERTIFICATE=${AGORA_APP_CERTIFICATE:-}"
+              echo "AGORA_TOKEN_TTL_SECONDS=${AGORA_TOKEN_TTL_SECONDS}"
+              echo "FIREBASE_SERVICE_ACCOUNT_PATH=${FIREBASE_SERVICE_ACCOUNT_PATH}"
+              echo "WEB_BASE_URL=${WEB_BASE_URL}"
+              echo "ADMIN_BASE_URL=${ADMIN_BASE_URL}"
+              echo "APP_BASE_URL=${APP_BASE_URL}"
+              echo "FRONTEND_BASE_URL=${FRONTEND_BASE_URL}"
+              echo "FRONTEND_URL=${FRONTEND_URL:-${FRONTEND_BASE_URL}}"
+              echo "API_MOUNT_PREFIXES=${API_MOUNT_PREFIXES}"
+              echo "TRIAL_CHAT_DURATION=${TRIAL_CHAT_DURATION}"
+              echo "FREE_WALLET_RECHARGE=${FREE_WALLET_RECHARGE}"
+              echo "CHAT_PRICE_PER_MIN=${CHAT_PRICE_PER_MIN}"
+              echo "AUDIO_CALL_PRICE_PER_MIN=${AUDIO_CALL_PRICE_PER_MIN}"
+              echo "VIDEO_CALL_PRICE_PER_MIN=${VIDEO_CALL_PRICE_PER_MIN}"
+              echo "MATE_SHARE_PERCENTAGE=${MATE_SHARE_PERCENTAGE}"
+              echo "PLATFORM_FEE_PERCENTAGE=${PLATFORM_FEE_PERCENTAGE}"
+              echo "COMMUNITY_UNLOCK_AMOUNT=${COMMUNITY_UNLOCK_AMOUNT}"
+              echo "SENTRY_DSN=${SENTRY_DSN:-}"
+              echo "ZOOM_ACCOUNT_ID=${ZOOM_ACCOUNT_ID:-}"
+              echo "ZOOM_CLIENT_ID=${ZOOM_CLIENT_ID:-}"
+              echo "ZOOM_CLIENT_SECRET=${ZOOM_CLIENT_SECRET:-}"
+              echo "ZOOM_USER_ID=${ZOOM_USER_ID}"
+              echo "ZOOM_WEBHOOK_SECRET_TOKEN=${ZOOM_WEBHOOK_SECRET_TOKEN:-}"
+              echo "CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}"
+              echo "CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID:-}"
+              echo "ENABLE_X_APP_KEY=${ENABLE_X_APP_KEY:-}"
+              echo "ENABLE_X_APP_ID=${ENABLE_X_APP_ID:-}"
+              echo "ENABLE_X_AUDIO_APP_ID=${ENABLE_X_AUDIO_APP_ID:-}"
+              echo "ENABLE_X_AUDIO_APP_KEY=${ENABLE_X_AUDIO_APP_KEY:-}"
+            } > .env
+
+            echo "==> Installing dependencies"
+            npm install --omit=dev
+
+            echo "==> Restarting PM2 process: $PM2_PROCESS_NAME"
+            if command -v pm2 >/dev/null 2>&1; then
+              if pm2 describe "$PM2_PROCESS_NAME" >/dev/null 2>&1; then
+                pm2 restart "$PM2_PROCESS_NAME" --update-env
+              else
+                echo "PM2 process '$PM2_PROCESS_NAME' not found — starting index.js"
+                pm2 start index.js --name "$PM2_PROCESS_NAME"
+              fi
+              pm2 save
+            else
+              echo "pm2 not found — install pm2 globally on the server"
+              exit 1
+            fi
+
+            sleep 3
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://127.0.0.1:${PORT}/mateandmentors" || echo "000")
+            if [ "$HTTP_CODE" != "000" ]; then
+              echo "==> Health check: server responded on port $PORT (HTTP $HTTP_CODE)"
+            else
+              echo "==> Warning: no response on port $PORT (check pm2 logs)"
+              pm2 logs "$PM2_PROCESS_NAME" --lines 30 --nostream || true
+            fi
+
+            echo "==> Done. Server deployed to $SERVER_APP_DIR ($DEPLOY_ENV)"
