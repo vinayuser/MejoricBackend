@@ -16,6 +16,11 @@ module.exports = {
     OTHER: "other",
   }),
 
+  CORPORATE_ROLES: Object.freeze({
+    MEMBER: "member",
+    OWNER: "owner",
+  }),
+
   PLATFORMS: Object.freeze({
     WEB: "WEB",
     // ANDROID: "ANDROID",

@@ -1,7 +1,7 @@
 const Corporate = require("../../models/Corporate");
 const CorporateInvoice = require("../../models/CorporateInvoice");
 const User = require("../../models/User");
-const { ROLES, LOGIN_TYPES } = require("../../constants");
+const { ROLES, LOGIN_TYPES, CORPORATE_ROLES } = require("../../constants");
 const { throwError, generateOTP } = require("../../utils");
 const { sendLoginOtpMail } = require("../../helpers/nodeMailer/sendLoginOtpMail");
 const {
@@ -13,13 +13,36 @@ const {
 const billing = require("./billing");
 
 const defaultPassword = process.env.DEFAULT_PASSWORD;
+const validator = require("validator");
+
+function resolveOwnerEmail(payload = {}) {
+  return String(payload.ownerEmail || payload.billingContactEmail || "")
+    .trim()
+    .toLowerCase();
+}
+
+function resolveOwnerName(payload = {}) {
+  return String(payload.ownerName || payload.billingContactName || "").trim();
+}
+
+function assertValidOwnerEmail(email, { required = false } = {}) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) {
+    if (required) throwError(422, "Company owner email is required");
+    return "";
+  }
+  if (!validator.isEmail(normalized)) {
+    throwError(422, "Please enter a valid company owner email");
+  }
+  return normalized;
+}
 
 function applyBillingFields(corporate, payload) {
-  if (payload.billingContactName != null) {
-    corporate.billingContactName = payload.billingContactName?.trim() || "";
+  if (payload.ownerName != null || payload.billingContactName != null) {
+    corporate.billingContactName = resolveOwnerName(payload);
   }
-  if (payload.billingContactEmail != null) {
-    corporate.billingContactEmail = payload.billingContactEmail?.trim()?.toLowerCase() || "";
+  if (payload.ownerEmail != null || payload.billingContactEmail != null) {
+    corporate.billingContactEmail = assertValidOwnerEmail(resolveOwnerEmail(payload));
   }
   if (payload.billingContactPhone != null) {
     corporate.billingContactPhone = payload.billingContactPhone?.trim() || "";
@@ -80,6 +103,10 @@ async function getCorporateById(id) {
 exports.createCorporate = async (payload = {}) => {
   const name = payload.name?.trim();
   const emailDomain = normalizeEmailDomain(payload.emailDomain);
+  const ownerEmail = assertValidOwnerEmail(resolveOwnerEmail(payload), {
+    required: true,
+  });
+  const ownerName = resolveOwnerName(payload);
   if (!name) throwError(422, "Company name is required");
   if (!emailDomain) throwError(422, "Email domain is required");
 
@@ -102,8 +129,8 @@ exports.createCorporate = async (payload = {}) => {
     contractEndDate: payload.contractEndDate
       ? new Date(payload.contractEndDate)
       : undefined,
-    billingContactName: payload.billingContactName?.trim() || "",
-    billingContactEmail: payload.billingContactEmail?.trim()?.toLowerCase() || "",
+    billingContactName: ownerName,
+    billingContactEmail: ownerEmail,
     billingContactPhone: payload.billingContactPhone?.trim() || "",
     gstNumber: payload.gstNumber?.trim() || "",
     billingAddress: payload.billingAddress?.trim() || "",
@@ -239,27 +266,68 @@ exports.getMyCorporateUsage = async (userId) => {
   return getCorporateUsageSummary(corporate);
 };
 
-exports.sendCorporateOtp = async (payload = {}) => {
-  const corporateId = payload.corporateId;
-  const email = payload.email?.toLowerCase()?.trim();
-  if (!corporateId) throwError(422, "Please select a company");
-  if (!email) throwError(422, "Email is required");
+async function resolveCorporateForEmail(email, corporateIdOptional) {
+  const normalizedEmail = email?.toLowerCase()?.trim();
+  if (!normalizedEmail) throwError(422, "Email is required");
 
-  const corporate = await Corporate.findOne({
-    _id: corporateId,
+  if (corporateIdOptional) {
+    const corporate = await Corporate.findOne({
+      _id: corporateIdOptional,
+      isActive: true,
+      isDeleted: false,
+    });
+    if (!corporate) throwError(404, "Company not found or inactive");
+    if (!emailMatchesCorporateDomain(normalizedEmail, corporate.emailDomain)) {
+      throwError(
+        403,
+        `Email must belong to @${corporate.emailDomain} to register with ${corporate.name}`,
+      );
+    }
+    const isOwner =
+      corporate.billingContactEmail?.toLowerCase() === normalizedEmail;
+    return { corporate, isOwner };
+  }
+
+  const ownerCorporate = await Corporate.findOne({
+    billingContactEmail: normalizedEmail,
     isActive: true,
     isDeleted: false,
   });
-  if (!corporate) throwError(404, "Company not found or inactive");
-
-  if (!emailMatchesCorporateDomain(email, corporate.emailDomain)) {
-    throwError(
-      403,
-      `Email must belong to @${corporate.emailDomain} to register with ${corporate.name}`,
-    );
+  if (ownerCorporate) {
+    return { corporate: ownerCorporate, isOwner: true };
   }
 
-  let user = await User.findOne({ email, isDeleted: false }).select("+password +otp");
+  const domain = normalizedEmail.split("@")[1];
+  if (!domain) throwError(422, "Please enter a valid work email address");
+
+  const corporate = await Corporate.findOne({
+    emailDomain: normalizeEmailDomain(domain),
+    isActive: true,
+    isDeleted: false,
+  });
+  if (!corporate) {
+    throwError(
+      404,
+      "No corporate plan found for this email. Use your company work email or contact your HR.",
+    );
+  }
+  return { corporate, isOwner: false };
+}
+
+exports.sendCorporateOtp = async (payload = {}) => {
+  const email = payload.email?.toLowerCase()?.trim();
+  const isLogin = payload.mode === "login";
+  const { corporate, isOwner } = await resolveCorporateForEmail(
+    email,
+    isLogin ? null : payload.corporateId,
+  );
+  const corporateId = corporate._id;
+
+  let user = await User.findOne({ email, isDeleted: false }).select("+otp");
+  if (isLogin && !isOwner && !user) {
+    throwError(404, "No account found with this email. Please sign up.");
+  }
+
   if (user) {
     if (user.corporateId && user.corporateId.toString() !== corporateId.toString()) {
       throwError(403, "This email is registered with a different corporate account");
@@ -277,17 +345,26 @@ exports.sendCorporateOtp = async (payload = {}) => {
     expiresAt: new Date(Date.now() + 5 * 60 * 1000),
   };
 
+  const corporateRole = isOwner ? CORPORATE_ROLES.OWNER : CORPORATE_ROLES.MEMBER;
+
   if (!user) {
     user = await User.create({
       email,
+      name: isOwner
+        ? corporate.billingContactName || corporate.name
+        : undefined,
       role: ROLES.USER,
       loginType: LOGIN_TYPES.EMAIL,
       password: defaultPassword,
       corporateId: corporate._id,
+      corporateRole,
+      isEmailVerified: isOwner,
+      isSignUpCompleted: isOwner,
       otp: otpPayload,
     });
   } else {
     user.corporateId = corporate._id;
+    user.corporateRole = corporateRole;
     user.otp = otpPayload;
     if (payload.name?.trim()) user.name = payload.name.trim();
     if (payload.age != null && payload.age !== "") {
@@ -295,21 +372,19 @@ exports.sendCorporateOtp = async (payload = {}) => {
       if (age >= 18 && age <= 100) user.age = age;
     }
     if (payload.city?.trim()) user.city = payload.city.trim();
+    if (isOwner && !user.name?.trim()) {
+      user.name = corporate.billingContactName || corporate.name;
+    }
     await user.save();
   }
 
-  try {
-    await sendLoginOtpMail(email, otpPayload.code);
-  } catch (err) {
+  sendLoginOtpMail(email, otpPayload.code).catch((err) => {
     console.error("[Corporate] OTP email failed:", err?.message || err);
-    throwError(
-      502,
-      "Could not send OTP email. Please try again in a moment.",
-    );
-  }
+  });
 
   return {
     isFirst: !user.isSignUpCompleted,
+    isOwner,
     email,
     corporateId: corporate._id,
     companyName: corporate.name,
@@ -317,23 +392,17 @@ exports.sendCorporateOtp = async (payload = {}) => {
 };
 
 exports.verifyCorporateOtp = async (payload = {}) => {
-  const corporateId = payload.corporateId;
   const email = payload.email?.toLowerCase()?.trim();
   const otp = payload.otp?.trim();
-  if (!corporateId) throwError(422, "Please select a company");
   if (!email) throwError(422, "Email is required");
   if (!otp) throwError(422, "OTP is required");
 
-  const corporate = await Corporate.findOne({
-    _id: corporateId,
-    isActive: true,
-    isDeleted: false,
-  });
-  if (!corporate) throwError(404, "Company not found or inactive");
-
-  if (!emailMatchesCorporateDomain(email, corporate.emailDomain)) {
-    throwError(403, `Email must belong to @${corporate.emailDomain}`);
-  }
+  const isLogin = payload.mode === "login";
+  const { corporate, isOwner } = await resolveCorporateForEmail(
+    email,
+    isLogin ? null : payload.corporateId,
+  );
+  const corporateId = corporate._id;
 
   let user = await User.findOne({ email, isDeleted: false }).select("+otp");
   if (!user) throwError(404, "User not found. Please request OTP again.");
@@ -341,7 +410,7 @@ exports.verifyCorporateOtp = async (payload = {}) => {
   if (new Date() > user.otp.expiresAt) throwError(410, "OTP expired");
   if (user.otp.code !== otp) throwError(403, "Invalid OTP");
 
-  const isNewSignup = !user.isSignUpCompleted;
+  const isNewSignup = !isOwner && !user.isSignUpCompleted;
   if (isNewSignup) {
     const name = payload.name?.trim();
     const age = parseInt(payload.age, 10);
@@ -356,16 +425,20 @@ exports.verifyCorporateOtp = async (payload = {}) => {
 
   user.otp = undefined;
   user.corporateId = corporate._id;
+  user.corporateRole = isOwner ? CORPORATE_ROLES.OWNER : CORPORATE_ROLES.MEMBER;
   user.loginType = LOGIN_TYPES.EMAIL;
   user.isEmailVerified = true;
   user.isSignUpCompleted = true;
   user.isLoggedIn = true;
   user.isOnline = true;
+  if (isOwner && !user.name?.trim()) {
+    user.name = corporate.billingContactName || corporate.name;
+  }
   if (payload.fcmToken) user.fcmToken = payload.fcmToken;
   if (payload.currentScreen) user.currentScreen = payload.currentScreen.toUpperCase();
 
   user = await user.save();
-  return user;
+  return { user, corporate };
 };
 
 exports.getBillingOverview = billing.getBillingOverview;

@@ -80,9 +80,17 @@ const userSchema = new mongoose.Schema(
       ref: "Corporate",
       default: null,
     },
+    /** Role within the corporate account (member = employee, owner = company admin). */
+    corporateRole: {
+      type: String,
+      enum: ["member", "owner"],
+      default: null,
+    },
   },
   { timestamps: true, versionKey: false },
 );
+
+userSchema.index({ email: 1, isDeleted: 1 });
 
 userSchema.methods.getSignedJwtToken = function (options = {}) {
   const expiresIn = options.expiresIn || "7d";

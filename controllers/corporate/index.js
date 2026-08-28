@@ -1,6 +1,7 @@
 const { asyncWrapper, sendSuccess, sendTokenResponse } = require("../../utils");
 const corporate = require("../../services/corporate");
-const { getCorporateUsageSummary, getCorporateForUser } = require("../../helpers/corporateBilling.helper");
+const corporateOwner = require("../../services/corporate/owner");
+const { getCorporateUsageSummary } = require("../../helpers/corporateBilling.helper");
 
 exports.createCorporate = asyncWrapper(async (req, res) => {
   const doc = await corporate.createCorporate(req.body || {});
@@ -82,9 +83,10 @@ exports.sendCorporateOtp = asyncWrapper(async (req, res) => {
 });
 
 exports.verifyCorporateOtp = asyncWrapper(async (req, res) => {
-  const user = await corporate.verifyCorporateOtp(req.body || {});
-  const usage = await getCorporateForUser(user._id);
-  const corporateUsage = getCorporateUsageSummary(usage);
+  const { user, corporate: corporateDoc } = await corporate.verifyCorporateOtp(
+    req.body || {},
+  );
+  const corporateUsage = getCorporateUsageSummary(corporateDoc);
   return sendTokenResponse(res, 200, "Corporate login successful", user, {
     corporateUsage,
   });
@@ -93,4 +95,33 @@ exports.verifyCorporateOtp = asyncWrapper(async (req, res) => {
 exports.getMyCorporateUsage = asyncWrapper(async (req, res) => {
   const usage = await corporate.getMyCorporateUsage(req.userId);
   return sendSuccess(res, 200, "Corporate usage fetched", usage);
+});
+
+exports.sendCorporateOwnerOtp = asyncWrapper(async (req, res) => {
+  const data = await corporateOwner.sendCorporateOwnerOtp(req.body || {});
+  return sendSuccess(res, 200, "OTP sent to your email", data);
+});
+
+exports.verifyCorporateOwnerOtp = asyncWrapper(async (req, res) => {
+  const { user, corporate: corporateDoc } =
+    await corporateOwner.verifyCorporateOwnerOtp(req.body || {});
+  const corporateUsage = getCorporateUsageSummary(corporateDoc);
+  return sendTokenResponse(res, 200, "Corporate owner login successful", user, {
+    corporateUsage,
+  });
+});
+
+exports.getOwnerDashboard = asyncWrapper(async (req, res) => {
+  const data = await corporateOwner.getOwnerDashboard(req.userId);
+  return sendSuccess(res, 200, "Corporate dashboard fetched", data);
+});
+
+exports.getOwnerUsageLogs = asyncWrapper(async (req, res) => {
+  const data = await corporateOwner.getOwnerUsageLogs(req.userId, req.query);
+  return sendSuccess(res, 200, "Usage logs fetched", data);
+});
+
+exports.getOwnerMembers = asyncWrapper(async (req, res) => {
+  const data = await corporateOwner.getOwnerMembers(req.userId, req.query);
+  return sendSuccess(res, 200, "Corporate members fetched", data);
 });

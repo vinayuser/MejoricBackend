@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { isAdmin, verifyJwtToken } = require("../middlewares");
+const { requireCorporateOwner } = require("../middlewares/requireCorporateOwner");
 const {
   createCorporate,
   updateCorporate,
@@ -19,6 +20,11 @@ const {
   sendCorporateOtp,
   verifyCorporateOtp,
   getMyCorporateUsage,
+  sendCorporateOwnerOtp,
+  verifyCorporateOwnerOtp,
+  getOwnerDashboard,
+  getOwnerUsageLogs,
+  getOwnerMembers,
 } = require("../controllers/corporate");
 
 /** Admin — billing & accounts */
@@ -40,8 +46,15 @@ router.delete("/admin/delete/:id", isAdmin, deleteCorporate);
 router.get("/active", listActiveCorporatesPublic);
 router.post("/send-otp", sendCorporateOtp);
 router.put("/verify-otp", verifyCorporateOtp);
+router.post("/owner/send-otp", sendCorporateOwnerOtp);
+router.put("/owner/verify-otp", verifyCorporateOwnerOtp);
 
 /** Corporate user */
 router.get("/me/usage", verifyJwtToken, getMyCorporateUsage);
+
+/** Corporate owner (company admin) */
+router.get("/owner/dashboard", verifyJwtToken, requireCorporateOwner, getOwnerDashboard);
+router.get("/owner/usage", verifyJwtToken, requireCorporateOwner, getOwnerUsageLogs);
+router.get("/owner/members", verifyJwtToken, requireCorporateOwner, getOwnerMembers);
 
 module.exports = { router, routePrefix: "/corporate" };

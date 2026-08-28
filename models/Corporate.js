@@ -16,6 +16,7 @@ const corporateSchema = new mongoose.Schema(
     isDeleted: { type: Boolean, default: false, select: false },
 
     /** Contract & commercial terms (B2B — company pays Mejoric) */
+    /** HR / company admin — logs in at corporate.mejoric.com to view usage dashboard */
     billingContactName: { type: String, trim: true },
     billingContactEmail: { type: String, trim: true, lowercase: true },
     billingContactPhone: { type: String, trim: true },
@@ -43,5 +44,6 @@ const corporateSchema = new mongoose.Schema(
 );
 
 corporateSchema.index({ emailDomain: 1, isActive: 1 });
+corporateSchema.index({ billingContactEmail: 1, isActive: 1 });
 
 module.exports = mongoose.model("Corporate", corporateSchema);
