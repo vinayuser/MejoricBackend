@@ -1,95 +1,53 @@
 {
-  "finishedAt": "2026-08-27T04:32:23.837Z",
-  "durationMs": 66,
-  "pairs": 3,
-  "concurrency": 3,
-  "success": 0,
-  "failed": 3,
-  "successRate": "0.0%",
+  "finishedAt": "2026-08-30T06:04:14.367Z",
+  "durationMs": 39106,
+  "pairs": 100,
+  "concurrency": 100,
+  "success": 100,
+  "failed": 0,
+  "successRate": "100.0%",
   "timings": {
     "initiate": {
       "label": "initiate",
-      "count": 3,
-      "minMs": 19,
-      "maxMs": 64,
-      "avgMs": 35,
-      "p50Ms": 21,
-      "p95Ms": 64,
-      "p99Ms": 64
+      "count": 100,
+      "minMs": 8720,
+      "maxMs": 12557,
+      "avgMs": 9760,
+      "p50Ms": 9804,
+      "p95Ms": 10563,
+      "p99Ms": 12550
     },
     "accept": {
       "label": "accept",
-      "count": 0
+      "count": 100,
+      "minMs": 6062,
+      "maxMs": 9026,
+      "avgMs": 7931,
+      "p50Ms": 8015,
+      "p95Ms": 8803,
+      "p99Ms": 8965
     },
     "end": {
       "label": "end",
-      "count": 0
+      "count": 100,
+      "minMs": 4390,
+      "maxMs": 13427,
+      "avgMs": 11394,
+      "p50Ms": 12079,
+      "p95Ms": 13104,
+      "p99Ms": 13229
     },
     "total": {
       "label": "total",
-      "count": 3,
-      "minMs": 19,
-      "maxMs": 64,
-      "avgMs": 35,
-      "p50Ms": 21,
-      "p95Ms": 64,
-      "p99Ms": 64
+      "count": 100,
+      "minMs": 28978,
+      "maxMs": 39079,
+      "avgMs": 37267,
+      "p50Ms": 37861,
+      "p95Ms": 38946,
+      "p99Ms": 39059
     }
   },
-  "errors": {
-    "initiate: connect ECONNREFUSED 127.0.0.1:3002": 3
-  },
-  "samples": [
-    {
-      "pair": 1,
-      "ok": false,
-      "errors": [
-        "initiate: connect ECONNREFUSED 127.0.0.1:3002"
-      ],
-      "timings": {
-        "initiate": [
-          64
-        ],
-        "accept": [],
-        "end": [],
-        "total": [
-          64
-        ]
-      }
-    },
-    {
-      "pair": 2,
-      "ok": false,
-      "errors": [
-        "initiate: connect ECONNREFUSED 127.0.0.1:3002"
-      ],
-      "timings": {
-        "initiate": [
-          21
-        ],
-        "accept": [],
-        "end": [],
-        "total": [
-          21
-        ]
-      }
-    },
-    {
-      "pair": 3,
-      "ok": false,
-      "errors": [
-        "initiate: connect ECONNREFUSED 127.0.0.1:3002"
-      ],
-      "timings": {
-        "initiate": [
-          19
-        ],
-        "accept": [],
-        "end": [],
-        "total": [
-          19
-        ]
-      }
-    }
-  ]
+  "errors": {},
+  "samples": []
 }

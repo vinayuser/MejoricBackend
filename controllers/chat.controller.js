@@ -7,6 +7,7 @@ const Mate = require("../models/Mate");
 const { sendPushNotification } = require("../helpers/notification.helper");
 const { getUserDisplayName, resolveChatOtherPartyName } = require("../helpers/userDisplayName.helper");
 const { processChatBilling } = require("../helpers/chatBilling.helper");
+const { hasCorporateMinutes } = require("../helpers/corporateBilling.helper");
 const { throwError } = require("../utils");
 const { ROLES } = require("../constants");
 const { looksLikeIpAddress } = require("../helpers/clientIp");
@@ -18,6 +19,32 @@ function publicSenderName(user) {
     return user?.role === ROLES.GUEST ? "Guest" : "User";
   }
   return name;
+}
+
+/** Wallet users need balance; corporate users need chat minutes in the company pool. */
+async function ensureUserCanUseChat(sender) {
+  if (!sender || sender.role !== ROLES.USER) return;
+
+  if (sender.corporateId) {
+    const allowed = await hasCorporateMinutes(sender._id, "chat", 1);
+    if (!allowed) {
+      throwError(
+        400,
+        "Your corporate chat minutes have been used up. Please contact your administrator.",
+      );
+    }
+    return;
+  }
+
+  const wallet = await Wallet.findOne({ userId: sender._id, isDeleted: false });
+  const balance = wallet?.balances?.INR ?? 0;
+  const pricePerMin = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
+  if (!wallet || balance < pricePerMin) {
+    throwError(
+      400,
+      "Your wallet balance is exhausted. Please recharge to continue using chats or calls.",
+    );
+  }
 }
 
 const sendMessage = async (req, res, next) => {
@@ -56,15 +83,7 @@ const sendMessage = async (req, res, next) => {
     }
 
     if (sender.role === ROLES.USER) {
-      const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
-      const balance = wallet?.balances?.INR ?? 0;
-      const pricePerMin = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
-      if (!wallet || balance < pricePerMin) {
-        return throwError(
-          400,
-          `Insufficient wallet balance. Chat costs ₹${pricePerMin} per minute. Please recharge your wallet.`,
-        );
-      }
+      await ensureUserCanUseChat(sender);
     }
 
     // Determine deterministic conversationId for socket room
@@ -185,15 +204,7 @@ const initiateChat = async (req, res, next) => {
     }
 
     if (sender.role === ROLES.USER) {
-      const wallet = await Wallet.findOne({ userId: senderId, isDeleted: false });
-      const balance = wallet?.balances?.INR ?? 0;
-      const pricePerMin = parseInt(process.env.CHAT_PRICE_PER_MIN) || 8;
-      if (!wallet || balance < pricePerMin) {
-        return throwError(
-          400,
-          "Your wallet balance is exhausted. Please recharge to continue using chats or calls.",
-        );
-      }
+      await ensureUserCanUseChat(sender);
     }
 
     if (sender.role === ROLES.GUEST && sender.forceSignupBeforeChat) {
