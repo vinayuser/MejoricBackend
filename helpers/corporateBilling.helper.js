@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Corporate = require("../models/Corporate");
+const { throwError } = require("../utils");
 
 function normalizeEmailDomain(domain) {
   return String(domain || "")
@@ -12,6 +13,46 @@ function emailMatchesCorporateDomain(email, domain) {
   const normalizedDomain = normalizeEmailDomain(domain);
   if (!normalizedDomain || !email) return false;
   return email.toLowerCase().trim().endsWith(`@${normalizedDomain}`);
+}
+
+function endOfContractDay(date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+/** True when contractEndDate is set and today is past that day. */
+function isCorporateContractExpired(corporate) {
+  if (!corporate?.contractEndDate) return false;
+  return new Date() > endOfContractDay(corporate.contractEndDate);
+}
+
+/**
+ * Days remaining until contract end (inclusive of end day).
+ * null = open-ended (no end date). 0 = expired.
+ */
+function getContractRemainingDays(corporate) {
+  if (!corporate?.contractEndDate) return null;
+  const end = endOfContractDay(corporate.contractEndDate);
+  const ms = end.getTime() - Date.now();
+  if (ms <= 0) return 0;
+  return Math.ceil(ms / (1000 * 60 * 60 * 24));
+}
+
+function assertCorporateContractActive(corporate) {
+  if (!corporate) return;
+  if (corporate.isActive === false) {
+    throwError(
+      403,
+      "This corporate account is inactive. Please contact Mejoric support.",
+    );
+  }
+  if (isCorporateContractExpired(corporate)) {
+    throwError(
+      403,
+      "This company's corporate plan has ended. Please contact Mejoric to renew.",
+    );
+  }
 }
 
 function getRemainingMinutes(corporate, type) {
@@ -40,17 +81,22 @@ function getCorporateUsageSummary(corporate) {
     audioMinutesUsed: doc.audioMinutesUsed ?? 0,
     videoMinutesUsed: doc.videoMinutesUsed ?? 0,
     chatMinutesUsed: doc.chatMinutesUsed ?? 0,
+    contractEndDate: doc.contractEndDate || null,
+    contractRemainingDays: getContractRemainingDays(doc),
+    contractExpired: isCorporateContractExpired(doc),
   };
 }
 
 async function getCorporateForUser(userId) {
   const user = await User.findById(userId).select("corporateId");
   if (!user?.corporateId) return null;
-  return Corporate.findOne({
+  const corporate = await Corporate.findOne({
     _id: user.corporateId,
     isActive: true,
     isDeleted: false,
   });
+  if (!corporate || isCorporateContractExpired(corporate)) return null;
+  return corporate;
 }
 
 async function hasCorporateMinutes(userId, type, requiredMinutes = 1) {
@@ -70,6 +116,13 @@ async function deductCorporateMinutes(corporateId, type, minutes) {
   const usedKey = `${type}MinutesUsed`;
   const totalKey = `${type}MinutesTotal`;
 
+  const corporate = await Corporate.findOne({
+    _id: corporateId,
+    isDeleted: false,
+    isActive: true,
+  });
+  if (!corporate || isCorporateContractExpired(corporate)) return null;
+
   return Corporate.findOneAndUpdate(
     {
       _id: corporateId,
@@ -87,6 +140,10 @@ async function deductCorporateMinutes(corporateId, type, minutes) {
 module.exports = {
   normalizeEmailDomain,
   emailMatchesCorporateDomain,
+  endOfContractDay,
+  isCorporateContractExpired,
+  getContractRemainingDays,
+  assertCorporateContractActive,
   getRemainingMinutes,
   getCorporateUsageSummary,
   getCorporateForUser,

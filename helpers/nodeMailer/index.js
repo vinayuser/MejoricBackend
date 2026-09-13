@@ -9,6 +9,7 @@ const {
   sendBookingConfirmationToMentor,
   sendBookingReminderEmail,
 } = require("./sendBookingEmails");
+const { sendCorporateInvoiceEmail } = require("./sendCorporateInvoiceMail");
 
 module.exports = {
   sendLoginOtpMail,
@@ -18,4 +19,5 @@ module.exports = {
   sendBookingConfirmationToUser,
   sendBookingConfirmationToMentor,
   sendBookingReminderEmail,
+  sendCorporateInvoiceEmail,
 };

@@ -76,6 +76,13 @@ const corporateInvoiceSchema = new mongoose.Schema(
       video: { type: Number, default: 0 },
       chat: { type: Number, default: 0 },
     },
+    /** Separates onboarding/setup from recurring subscription invoices */
+    invoiceKind: {
+      type: String,
+      enum: ["onboarding", "subscription", "adjustment"],
+      default: "subscription",
+      index: true,
+    },
     isDeleted: { type: Boolean, default: false, select: false },
   },
   { timestamps: true, versionKey: false },

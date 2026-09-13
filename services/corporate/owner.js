@@ -4,6 +4,7 @@ const { ROLES, LOGIN_TYPES, CORPORATE_ROLES } = require("../../constants");
 const { throwError, generateOTP } = require("../../utils");
 const { sendLoginOtpMail } = require("../../helpers/nodeMailer/sendLoginOtpMail");
 const billing = require("./billing");
+const { assertCorporateContractActive } = require("../../helpers/corporateBilling.helper");
 
 const defaultPassword = process.env.DEFAULT_PASSWORD;
 
@@ -32,6 +33,7 @@ async function resolveCorporateForOwnerEmail(email) {
     );
   }
 
+  assertCorporateContractActive(corporate);
   return corporate;
 }
 

@@ -9,6 +9,9 @@ const {
   emailMatchesCorporateDomain,
   getCorporateUsageSummary,
   getCorporateForUser,
+  assertCorporateContractActive,
+  getContractRemainingDays,
+  isCorporateContractExpired,
 } = require("../../helpers/corporateBilling.helper");
 const billing = require("./billing");
 
@@ -240,6 +243,8 @@ exports.listCorporatesAdmin = async (query = {}) => {
         ),
         outstandingBalance: Math.round(outstanding * 100) / 100,
         hasOverdue: openInvoices.some((i) => i.status === "overdue"),
+        contractRemainingDays: getContractRemainingDays(c),
+        contractExpired: isCorporateContractExpired(c),
       };
     }),
   );
@@ -254,10 +259,10 @@ exports.listCorporatesAdmin = async (query = {}) => {
 
 exports.listActiveCorporatesPublic = async () => {
   const corporates = await Corporate.find({ isActive: true, isDeleted: false })
-    .select("name slug emailDomain")
+    .select("name slug emailDomain contractEndDate")
     .sort({ name: 1 })
     .lean();
-  return corporates;
+  return corporates.filter((c) => !isCorporateContractExpired(c));
 };
 
 exports.getMyCorporateUsage = async (userId) => {
@@ -277,6 +282,7 @@ async function resolveCorporateForEmail(email, corporateIdOptional) {
       isDeleted: false,
     });
     if (!corporate) throwError(404, "Company not found or inactive");
+    assertCorporateContractActive(corporate);
     if (!emailMatchesCorporateDomain(normalizedEmail, corporate.emailDomain)) {
       throwError(
         403,
@@ -294,6 +300,7 @@ async function resolveCorporateForEmail(email, corporateIdOptional) {
     isDeleted: false,
   });
   if (ownerCorporate) {
+    assertCorporateContractActive(ownerCorporate);
     return { corporate: ownerCorporate, isOwner: true };
   }
 
@@ -311,6 +318,7 @@ async function resolveCorporateForEmail(email, corporateIdOptional) {
       "No corporate plan found for this email. Use your company work email or contact your HR.",
     );
   }
+  assertCorporateContractActive(corporate);
   return { corporate, isOwner: false };
 }
 

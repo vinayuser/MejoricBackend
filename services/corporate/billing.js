@@ -4,7 +4,14 @@ const CorporateInvoice = require("../../models/CorporateInvoice");
 const CorporateUsageLog = require("../../models/CorporateUsageLog");
 const User = require("../../models/User");
 const { throwError } = require("../../utils");
-const { getRemainingMinutes } = require("../../helpers/corporateBilling.helper");
+const {
+  getRemainingMinutes,
+  getContractRemainingDays,
+  isCorporateContractExpired,
+} = require("../../helpers/corporateBilling.helper");
+const {
+  sendCorporateInvoiceEmail,
+} = require("../../helpers/nodeMailer/sendCorporateInvoiceMail");
 
 const CYCLE_MONTHS = {
   monthly: 1,
@@ -41,6 +48,35 @@ function computePeriodForCycle(cycle, anchorDate = new Date()) {
   const periodStart = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
   const periodEnd = endOfDay(addMonths(periodStart, months) - 86400000);
   return { periodStart, periodEnd, billingCycle: cycle };
+}
+
+/** Resolve billing window from periodMonth (YYYY-MM), periodStart/End, or current cycle. */
+function resolveBillingPeriod(cycle, payload = {}) {
+  if (payload.periodMonth) {
+    const match = String(payload.periodMonth).match(/^(\d{4})-(\d{2})$/);
+    if (!match) throwError(422, "periodMonth must be YYYY-MM (e.g. 2026-08)");
+    const year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    if (month < 1 || month > 12) throwError(422, "Invalid periodMonth");
+    return computePeriodForCycle(cycle, new Date(year, month - 1, 1));
+  }
+
+  if (payload.periodStart) {
+    const periodStart = startOfDay(new Date(payload.periodStart));
+    if (Number.isNaN(periodStart.getTime())) {
+      throwError(422, "Invalid periodStart date");
+    }
+    if (payload.periodEnd) {
+      const periodEnd = endOfDay(new Date(payload.periodEnd));
+      if (Number.isNaN(periodEnd.getTime())) {
+        throwError(422, "Invalid periodEnd date");
+      }
+      return { periodStart, periodEnd, billingCycle: cycle };
+    }
+    return computePeriodForCycle(cycle, periodStart);
+  }
+
+  return computePeriodForCycle(cycle);
 }
 
 async function generateInvoiceNumber() {
@@ -118,6 +154,26 @@ function calcTotals(lineItems, taxPercent = 18) {
   return { subtotal, taxPercent, taxAmount, totalAmount };
 }
 
+function deriveInvoiceKind(inv) {
+  if (inv.invoiceKind) return inv.invoiceKind;
+  if (inv.billingCycle === "one_time") return "onboarding";
+  if (inv.lineItems?.some((li) => li.type === "setup_fee") && !inv.lineItems?.some((li) => li.type === "platform_fee")) {
+    return "onboarding";
+  }
+  return "subscription";
+}
+
+function mapInvoice(inv) {
+  const kind = deriveInvoiceKind(inv);
+  return {
+    ...inv,
+    invoiceKind: kind,
+    balanceDue: roundMoney(
+      Math.max(0, inv.totalAmount - (inv.amountPaid || 0)),
+    ),
+  };
+}
+
 function deriveInvoiceStatus(invoice) {
   if (invoice.status === "cancelled" || invoice.status === "draft") {
     return invoice.status;
@@ -148,10 +204,20 @@ async function getCorporateById(id) {
   return corporate;
 }
 
+function notifyOwnerOfInvoice(corporate, invoice) {
+  sendCorporateInvoiceEmail({ corporate, invoice }).catch((err) => {
+    console.error(
+      `[Corporate Invoice Email] Failed for ${invoice?.invoiceNumber}:`,
+      err?.message || err,
+    );
+  });
+}
+
 exports.createInitialInvoices = async (corporate) => {
   const created = [];
   const termsDays = corporate.paymentTermsDays ?? 15;
 
+  // 1) Onboarding / setup fee — separate one-time invoice
   if (corporate.setupFee > 0) {
     const lineItems = buildLineItems(corporate, {
       setupFee: corporate.setupFee,
@@ -164,6 +230,7 @@ exports.createInitialInvoices = async (corporate) => {
     const invoice = await CorporateInvoice.create({
       corporateId: corporate._id,
       invoiceNumber: await generateInvoiceNumber(),
+      invoiceKind: "onboarding",
       billingCycle: "one_time",
       periodStart: startOfDay(new Date()),
       periodEnd: endOfDay(new Date()),
@@ -172,11 +239,13 @@ exports.createInitialInvoices = async (corporate) => {
       dueDate,
       status: "pending",
       minuteAllocation: { audio: 0, video: 0, chat: 0 },
-      notes: "Setup fee invoice",
+      notes: "Onboarding / setup fee",
     });
     created.push(invoice);
+    notifyOwnerOfInvoice(corporate, invoice);
   }
 
+  // 2) First subscription period — separate from onboarding
   if (corporate.monthlyPlatformFee > 0 && corporate.autoRenewInvoice !== false) {
     const cycle = corporate.billingCycle || "monthly";
     const { periodStart, periodEnd } = computePeriodForCycle(
@@ -187,16 +256,21 @@ exports.createInitialInvoices = async (corporate) => {
       corporateId: corporate._id,
       periodStart,
       isDeleted: false,
-      billingCycle: { $ne: "one_time" },
+      invoiceKind: "subscription",
+      status: { $ne: "cancelled" },
     });
     if (!existing) {
-      const lineItems = buildLineItems(corporate, { includeMinuteBundle: true });
+      const lineItems = buildLineItems(corporate, {
+        includeMinuteBundle: true,
+        setupFee: 0,
+      });
       const totals = calcTotals(lineItems);
       const dueDate = new Date(periodStart);
       dueDate.setDate(dueDate.getDate() + termsDays);
       const invoice = await CorporateInvoice.create({
         corporateId: corporate._id,
         invoiceNumber: await generateInvoiceNumber(),
+        invoiceKind: "subscription",
         billingCycle: cycle,
         periodStart,
         periodEnd,
@@ -204,6 +278,7 @@ exports.createInitialInvoices = async (corporate) => {
         ...totals,
         dueDate,
         status: "pending",
+        notes: "Subscription — first billing period",
         minuteAllocation: {
           audio: corporate.audioMinutesTotal || 0,
           video: corporate.videoMinutesTotal || 0,
@@ -211,6 +286,7 @@ exports.createInitialInvoices = async (corporate) => {
         },
       });
       created.push(invoice);
+      notifyOwnerOfInvoice(corporate, invoice);
     }
   }
 
@@ -220,21 +296,23 @@ exports.createInitialInvoices = async (corporate) => {
 exports.generateInvoice = async (corporateId, payload = {}) => {
   const corporate = await getCorporateById(corporateId);
   const cycle = payload.billingCycle || corporate.billingCycle || "monthly";
-  const { periodStart, periodEnd } = payload.periodStart
-    ? {
-        periodStart: startOfDay(new Date(payload.periodStart)),
-        periodEnd: endOfDay(new Date(payload.periodEnd)),
-      }
-    : computePeriodForCycle(cycle);
+  const invoiceKind = payload.invoiceKind || "subscription";
+  const { periodStart, periodEnd } = resolveBillingPeriod(cycle, payload);
 
-  const duplicate = await CorporateInvoice.findOne({
-    corporateId,
-    periodStart,
-    isDeleted: false,
-    status: { $ne: "cancelled" },
-  });
-  if (duplicate) {
-    throwError(409, "An invoice already exists for this billing period");
+  if (invoiceKind === "subscription") {
+    const duplicate = await CorporateInvoice.findOne({
+      corporateId,
+      periodStart,
+      isDeleted: false,
+      invoiceKind: "subscription",
+      status: { $ne: "cancelled" },
+    });
+    if (duplicate) {
+      throwError(
+        409,
+        `A subscription invoice already exists for ${periodStart.toLocaleString("en-IN", { month: "long", year: "numeric" })} (${duplicate.invoiceNumber})`,
+      );
+    }
   }
 
   const platformFee =
@@ -255,7 +333,10 @@ exports.generateInvoice = async (corporateId, payload = {}) => {
   const taxPercent = payload.taxPercent != null ? Number(payload.taxPercent) : 18;
   const totals = calcTotals(lineItems, taxPercent);
   if (totals.totalAmount <= 0) {
-    throwError(422, "Invoice total must be greater than zero");
+    throwError(
+      422,
+      "Invoice total must be greater than zero. Set a monthly platform fee on the contract first.",
+    );
   }
 
   const termsDays = corporate.paymentTermsDays ?? 15;
@@ -267,23 +348,36 @@ exports.generateInvoice = async (corporateId, payload = {}) => {
         return d;
       })();
 
-  return CorporateInvoice.create({
+  const monthLabel = periodStart.toLocaleString("en-IN", {
+    month: "long",
+    year: "numeric",
+  });
+
+  const invoice = await CorporateInvoice.create({
     corporateId,
     invoiceNumber: await generateInvoiceNumber(),
-    billingCycle: cycle,
+    invoiceKind,
+    billingCycle: invoiceKind === "onboarding" ? "one_time" : cycle,
     periodStart,
     periodEnd,
     lineItems,
     ...totals,
     dueDate,
     status: "pending",
-    notes: payload.notes?.trim() || "",
+    notes:
+      payload.notes?.trim() ||
+      (invoiceKind === "subscription"
+        ? `Subscription — ${monthLabel}`
+        : payload.notes?.trim() || ""),
     minuteAllocation: {
       audio: corporate.audioMinutesTotal || 0,
       video: corporate.videoMinutesTotal || 0,
       chat: corporate.chatMinutesTotal || 0,
     },
   });
+
+  notifyOwnerOfInvoice(corporate, invoice);
+  return invoice;
 };
 
 exports.recordPayment = async (invoiceId, payload = {}, adminUserId) => {
@@ -433,6 +527,14 @@ exports.getCorporateDashboard = async (corporateId) => {
     ["pending", "partially_paid", "overdue"].includes(i.status),
   );
 
+  const mappedInvoices = invoices.map(mapInvoice);
+  const onboardingInvoices = mappedInvoices.filter(
+    (i) => i.invoiceKind === "onboarding",
+  );
+  const subscriptionInvoices = mappedInvoices.filter(
+    (i) => i.invoiceKind !== "onboarding",
+  );
+
   return {
     corporate: {
       ...corpObj,
@@ -440,18 +542,23 @@ exports.getCorporateDashboard = async (corporateId) => {
       audioMinutesRemaining: getRemainingMinutes(corpObj, "audio"),
       videoMinutesRemaining: getRemainingMinutes(corpObj, "video"),
       chatMinutesRemaining: getRemainingMinutes(corpObj, "chat"),
+      contractRemainingDays: getContractRemainingDays(corpObj),
+      contractExpired: isCorporateContractExpired(corpObj),
     },
     billing: {
       monthlyPlatformFee: corpObj.monthlyPlatformFee || 0,
       billingCycle: corpObj.billingCycle || "monthly",
       contractStartDate: corpObj.contractStartDate,
       contractEndDate: corpObj.contractEndDate,
+      contractRemainingDays: getContractRemainingDays(corpObj),
+      contractExpired: isCorporateContractExpired(corpObj),
       paymentTermsDays: corpObj.paymentTermsDays ?? 15,
       totalOutstanding: roundMoney(outstanding),
       totalPaid: roundMoney(totalPaid),
       nextDueInvoice: nextDue
         ? {
             ...nextDue,
+            invoiceKind: deriveInvoiceKind(nextDue),
             balanceDue: roundMoney(
               Math.max(0, nextDue.totalAmount - (nextDue.amountPaid || 0)),
             ),
@@ -462,12 +569,9 @@ exports.getCorporateDashboard = async (corporateId) => {
     },
     usageStats,
     recentUsage,
-    invoices: invoices.slice(0, 12).map((inv) => ({
-      ...inv,
-      balanceDue: roundMoney(
-        Math.max(0, inv.totalAmount - (inv.amountPaid || 0)),
-      ),
-    })),
+    invoices: mappedInvoices,
+    onboardingInvoices,
+    subscriptionInvoices,
   };
 };
 
